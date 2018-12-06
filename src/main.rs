@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   let remote_root = "db:/config";
 
-  rclone!("sync", remote_root, root).status()?;
+  rclone!("sync", remote_root, root, "--progress").status()?;
 
   println!("Fetched data from remote.");
 
@@ -40,26 +40,30 @@ fn main() -> Result<(), Box<dyn Error>> {
   let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_millis(200)).expect("Cannot spawn watcher.");
   watcher.watch(root, RecursiveMode::Recursive).expect("Cannot watch directory watcher.");
 
-  let get_included_paths = || WalkBuilder::new(root).hidden(false).build().map(|w| PathBuf::from(w.unwrap().path())).collect::<Vec<PathBuf>>();
+  let get_included_paths = || WalkBuilder::new(root).hidden(false).build().map(|w| {
+    let path = PathBuf::from(w.unwrap().path());
+    let is_file = path.is_file();
+    (is_file, path)
+  }).collect::<Vec<(bool, PathBuf)>>();
 
-  let upload_path = |path: &Path| {
+  let upload_path = |path: &Path, preserve_file: bool| {
     let relative = path.strip_prefix(root).unwrap();
-    let mut is_file = true;
 
-    let relative = if path.is_file() {
-      relative.parent().unwrap()
+    let relative = if !preserve_file {
+      if path.is_file() {
+        relative.parent().unwrap()
+      } else {
+        relative
+      }
     } else {
-      is_file = false;
       relative
     };
 
-    let u_path = if cfg!(target_os = "windows") {
+    if cfg!(target_os = "windows") {
       str::replace(&relative.display().to_string(), "\\", "/")
     } else {
       relative.display().to_string()
-    };
-
-    (u_path, is_file)
+    }
   };
 
   let mut legal_paths = get_included_paths();
@@ -70,16 +74,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         DebouncedEvent::Create(ref path) => {
           legal_paths = get_included_paths();
 
-          if legal_paths.contains(path) {
-           let (u_path, is_file) = upload_path(path);
+          if let Some(lp) = legal_paths.iter().filter(|(_, p)| p == path).next() {
+           let u_path = upload_path(path, false);
 
-           if is_file {
-            match rclone!("copy", &path.display().to_string(), &format!("{}/{}", remote_root, u_path)).status() {
+           if lp.0 {
+            match rclone!("copy", &path.display().to_string(), &format!("{}/{}", remote_root, &u_path)).status() {
               Ok(_) => println!("Created: {}", path.display()),
               Err(e) => println!("{}", e)
             }
            } else {
-            match rclone!("mkdir", &format!("{}/{}", remote_root, u_path)).status() {
+            match rclone!("mkdir", &format!("{}/{}", remote_root, &u_path)).status() {
               Ok(_) => println!("Created: {}", path.display()),
               Err(e) => println!("{}", e)
             }
@@ -87,27 +91,37 @@ fn main() -> Result<(), Box<dyn Error>> {
           }
         },
         DebouncedEvent::Write(ref path) => {
-          if legal_paths.contains(path) {
-            let (u_path, _) = upload_path(path);
-            match rclone!("copy", &path.display().to_string(), &format!("{}/{}", remote_root, u_path)).status() {
+          if let Some(_) = legal_paths.iter().filter(|(_, p)| p == path).next() {
+            match rclone!("copy", &path.display().to_string(), &format!("{}/{}", remote_root, upload_path(path, false))).status() {
               Ok(_) => println!("Updated: {}", path.display()),
               Err(e) => println!("{}", e)
             }
           }
         },
-        DebouncedEvent::Rename(ref old_path, ref path) => (),
-        DebouncedEvent::Remove(ref path) => {
-          let (u_path, is_file) = upload_path(path);
-
-          if is_file {
-            match rclone!("delete", &format!("{}/{}", remote_root, u_path)).status() {
-              Ok(_) => println!("Deleted: {}", path.display()),
+        DebouncedEvent::Rename(ref from_path, ref to_path) => {
+          if let Some(_) = legal_paths.iter().filter(|(_, p)| p == from_path).next() {
+            match rclone!("moveto", &format!("{}/{}", remote_root, upload_path(from_path, true)), &format!("{}/{}", remote_root, upload_path(to_path, true))).status() {
+              Ok(_) => println!("Renamed {} to {}", from_path.display(), to_path.display()),
               Err(e) => println!("{}", e)
             }
-          } else {
-            match rclone!("purge", &format!("{}/{}", remote_root, u_path)).status() {
-              Ok(_) => println!("Deleted: {}", path.display()),
-              Err(e) => println!("{}", e)
+          }
+
+          legal_paths = get_included_paths();
+        },
+        DebouncedEvent::Remove(ref path) => {
+          if let Some(lp) = legal_paths.iter().filter(|(_, p)| p == path).next() {
+            let u_path = upload_path(path, false);
+
+            if lp.0 {
+              match rclone!("delete", &format!("{}/{}", remote_root, u_path)).status() {
+                Ok(_) => println!("Deleted: {}", path.display()),
+                Err(e) => println!("{}", e)
+              }
+            } else {
+              match rclone!("purge", &format!("{}/{}", remote_root, u_path)).status() {
+                Ok(_) => println!("Purged: {}", path.display()),
+                Err(e) => println!("{}", e)
+              }
             }
           }
         },
