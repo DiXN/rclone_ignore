@@ -27,12 +27,12 @@ macro_rules! rclone {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-  let root = "./sync";
+  let root = "F:\\sync";
   let root = &canonicalize(&root).unwrap().display().to_string()[4..];
 
-  let remote_root = "db:/config";
+  let remote_root = "db:/";
 
-  rclone!("sync", remote_root, root, "--progress").status()?;
+  rclone!("copy", remote_root, root, "--progress", "--checkers", "128", "--retries", "1").status()?;
 
   println!("Fetched data from remote.");
 
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn Error>> {
   watcher.watch(root, RecursiveMode::Recursive).expect("Cannot watch directory watcher.");
 
   let get_included_paths = || WalkBuilder::new(root).hidden(false).build().map(|w| {
-    let path = PathBuf::from(w.unwrap().path());
+    let path = w.unwrap().into_path();
     let is_file = path.is_file();
     (is_file, path)
   }).collect::<Vec<(bool, PathBuf)>>();
@@ -71,6 +71,8 @@ fn main() -> Result<(), Box<dyn Error>> {
   loop {
     if let Ok(notify) = rx.recv() {
       match notify {
+        DebouncedEvent::NoticeWrite(_) => continue,
+        DebouncedEvent::NoticeRemove(_) => continue,
         DebouncedEvent::Create(ref path) => {
           legal_paths = get_included_paths();
 
@@ -91,10 +93,12 @@ fn main() -> Result<(), Box<dyn Error>> {
           }
         },
         DebouncedEvent::Write(ref path) => {
-          if let Some(_) = legal_paths.iter().filter(|(_, p)| p == path).next() {
-            match rclone!("copy", &path.display().to_string(), &format!("{}/{}", remote_root, upload_path(path, false))).status() {
-              Ok(_) => println!("Updated: {}", path.display()),
-              Err(e) => println!("{}", e)
+          if let Some(lp) = legal_paths.iter().filter(|(_, p)| p == path).next() {
+            if lp.0 {
+              match rclone!("copy", &path.display().to_string(), &format!("{}/{}", remote_root, upload_path(path, false))).status() {
+                Ok(_) => println!("Updated: {}", path.display()),
+                Err(e) => println!("{}", e)
+              }
             }
           }
         },
