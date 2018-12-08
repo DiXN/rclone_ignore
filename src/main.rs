@@ -15,7 +15,6 @@ extern crate tokio_process;
 use tokio_process::CommandExt;
 
 extern crate futures;
-use futures::future::{ok, lazy};
 use futures::prelude::*;
 use futures::stream;
 
@@ -26,7 +25,7 @@ use std::{
   error::Error,
   time::Duration,
   sync::mpsc,
-  str,
+  cmp::min,
   path::{PathBuf, Path}
 };
 
@@ -145,7 +144,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         DebouncedEvent::Chmod(ref path) => paths.push(PathOp::new(path, path, Op::CHMOD)),
         _ => ()
       }
-      while let Ok(nf) = rx.recv_timeout(Duration::from_millis(1000)) {
+      while let Ok(nf) = rx.recv_timeout(Duration::from_millis(500)) {
         match nf {
           DebouncedEvent::NoticeWrite(_) => continue,
           DebouncedEvent::NoticeRemove(_) => continue,
@@ -173,7 +172,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         tasks.push(Box::new(rclone!("moveto", &format!("{}/{}", remote_root, upload_path(&chunk[0].path, true)), &format!("{}/{}", remote_root, upload_path(&chunk[1].path, true)))
           .output_async()
           .map_err(|e| panic!("failed to collect output: {}", e))
-          .map(move |output| format!("MOVE from: {}, to: {}\nstatus: {}\noutput: {}", from_u_path, to_u_path, output.status.success(), str::from_utf8(&output.stdout).unwrap()))
+          .map(move |output| format!("MOVE from: {}, to: {}\nstatus: {}", from_u_path, to_u_path, output.status.success()))
         ));
       } else {
         for c in chunk {
@@ -187,13 +186,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                   tasks.push(Box::new(rclone!("copy", &c.path.display().to_string(), &format!("{}/{}", remote_root, &u_path))
                     .output_async()
                     .map_err(|e| panic!("failed to collect output: {}", e))
-                    .map(move |output| format!("COPY path: {}\nstatus: {}\noutput: {}", print_path, output.status.success(), str::from_utf8(&output.stdout).unwrap()))
+                    .map(move |output| format!("COPY path: {}\nstatus: {}", print_path, output.status.success()))
                   ));
                 } else {
                   tasks.push(Box::new(rclone!("mkdir", &format!("{}/{}", remote_root, &u_path))
                     .output_async()
                     .map_err(|e| panic!("failed to collect output: {}", e))
-                    .map(move |output| format!("MKDIR path: {}\nstatus: {}\noutput: {}", print_path, output.status.success(), str::from_utf8(&output.stdout).unwrap()))
+                    .map(move |output| format!("MKDIR path: {}\nstatus: {}", print_path, output.status.success()))
                   ));
                 }
               }
@@ -206,7 +205,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                   tasks.push(Box::new(rclone!("copy", &c.path.display().to_string(), &format!("{}/{}", remote_root, upload_path(&c.path, false)))
                     .output_async()
                     .map_err(|e| panic!("failed to collect output: {}", e))
-                    .map(move |output| format!("COPY path: {}\nstatus: {}\noutput: {}", print_path, output.status.success(), str::from_utf8(&output.stdout).unwrap()))
+                    .map(move |output| format!("COPY path: {}\nstatus: {}", print_path, output.status.success()))
                   ));
                 }
               }
@@ -219,7 +218,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 tasks.push(Box::new(rclone!("moveto", &format!("{}/{}", remote_root, &from_u_path), &format!("{}/{}", remote_root, &to_u_path))
                   .output_async()
                   .map_err(|e| panic!("failed to collect output: {}", e))
-                  .map(move |output| format!("RENAME from: {}, to: {}\nstatus: {}\noutput: {}", from_u_path, to_u_path, output.status.success(), str::from_utf8(&output.stdout).unwrap()))
+                  .map(move |output| format!("RENAME from: {}, to: {}\nstatus: {}", from_u_path, to_u_path, output.status.success()))
                 ));
               }
             },
@@ -231,13 +230,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                   tasks.push(Box::new(rclone!("delete", &format!("{}/{}", remote_root, u_path))
                     .output_async()
                     .map_err(|e| panic!("failed to collect output: {}", e))
-                    .map(move |output| format!("DELETE path: {}\nstatus: {}\noutput: {}", u_path, output.status.success(), str::from_utf8(&output.stdout).unwrap()))
+                    .map(move |output| format!("DELETE path: {}\nstatus: {}", u_path, output.status.success()))
                   ));
                 } else {
                   tasks.push(Box::new(rclone!("purge", &format!("{}/{}", remote_root, u_path))
                     .output_async()
                     .map_err(|e| panic!("failed to collect output: {}", e))
-                    .map(move |output| format!("PURGE path: {}\nstatus: {}\noutput: {}", u_path, output.status.success(), str::from_utf8(&output.stdout).unwrap()))
+                    .map(move |output| format!("PURGE path: {}\nstatus: {}", u_path, output.status.success()))
                   ));
                 }
               }
@@ -250,13 +249,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     if tasks.len() > 0 {
       let stream = stream::iter_ok::<_, ()>(tasks);
-      tokio::run(stream.buffered(std::cmp::min(paths.len(), 3)).for_each(|rs| {
+      tokio::run(stream.buffered(min(paths.len(), 3)).for_each(|rs| {
         println!("{}", rs);
         Ok(())
       }));
     }
-
-    println!("{:?}", paths);
 
     legal_paths = legal_paths_updated;
   }
