@@ -129,6 +129,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
   };
 
+  let mut legal_paths = get_included_paths();
+
   loop {
     let mut paths = Vec::new();
 
@@ -157,61 +159,72 @@ fn main() -> Result<(), Box<dyn Error>> {
       }
     }
 
-    let legal_paths = get_included_paths();
+    let legal_paths_updated = get_included_paths();
     let mut tasks: Vec<Box<Future<Item = String, Error = ()> + Send>> = Vec::new();
 
     for chunk in paths.chunks(2) {
       if chunk.len() > 1 && chunk[0].op == Op::REMOVE &&
         (chunk[1].op == Op::CREATE || chunk[1].op == Op::WRITE) &&
-          legal_paths.iter().filter(|(_, p)| p == &chunk[1].path).next().is_some() {
-        tasks.push(Box::new(rclone!("moveto", &format!("{}/{}", remote_root, upload_path(&chunk[0].path, true)), &format!("{}/{}", remote_root, upload_path(&chunk[1].path, false)))
+          legal_paths.iter().filter(|(_, p)| p == &chunk[0].path).next().is_some() &&
+            legal_paths_updated.iter().filter(|(_, p)| p == &chunk[1].path).next().is_some() {
+        let from_u_path = upload_path(&chunk[0].path, true);
+        let to_u_path = upload_path(&chunk[1].path, true);
+
+        tasks.push(Box::new(rclone!("moveto", &format!("{}/{}", remote_root, upload_path(&chunk[0].path, true)), &format!("{}/{}", remote_root, upload_path(&chunk[1].path, true)))
           .output_async()
           .map_err(|e| panic!("failed to collect output: {}", e))
-          .map(|output| format!("status: {} \n output: {}", output.status.success(), str::from_utf8(&output.stdout).unwrap()))
+          .map(move |output| format!("MOVE from: {}, to: {}\nstatus: {}\noutput: {}", from_u_path, to_u_path, output.status.success(), str::from_utf8(&output.stdout).unwrap()))
         ));
       } else {
         for c in chunk {
-          if let Some((is_file, _)) = legal_paths.iter().filter(|(_, p)| p == &c.path).next() {
-            match &c.op {
-              Op::CREATE => {
+          match &c.op {
+            Op::CREATE => {
+              if let Some((is_file, _)) = legal_paths_updated.iter().filter(|(_, p)| p == &c.path).next() {
                 let u_path = upload_path(&c.path, false);
+                let print_path = upload_path(&c.path, true);
 
                 if *is_file {
                   tasks.push(Box::new(rclone!("copy", &c.path.display().to_string(), &format!("{}/{}", remote_root, &u_path))
                     .output_async()
                     .map_err(|e| panic!("failed to collect output: {}", e))
-                    .map(move |output| format!("COPY path: {}\nstatus: {}\noutput: {}", u_path, output.status.success(), str::from_utf8(&output.stdout).unwrap()))
+                    .map(move |output| format!("COPY path: {}\nstatus: {}\noutput: {}", print_path, output.status.success(), str::from_utf8(&output.stdout).unwrap()))
                   ));
                 } else {
                   tasks.push(Box::new(rclone!("mkdir", &format!("{}/{}", remote_root, &u_path))
                     .output_async()
                     .map_err(|e| panic!("failed to collect output: {}", e))
-                    .map(move |output| format!("MKDIR path: {}\nstatus: {}\noutput: {}", u_path, output.status.success(), str::from_utf8(&output.stdout).unwrap()))
+                    .map(move |output| format!("MKDIR path: {}\nstatus: {}\noutput: {}", print_path, output.status.success(), str::from_utf8(&output.stdout).unwrap()))
                   ));
                 }
-              },
-              Op::WRITE => {
+              }
+            },
+            Op::WRITE => {
+              if let Some((is_file, _)) = legal_paths_updated.iter().filter(|(_, p)| p == &c.path).next() {
                 if *is_file {
-                  let u_path = upload_path(&c.path, false);
+                  let print_path = upload_path(&c.path, true);
 
-                  tasks.push(Box::new(rclone!("copy", &c.path.display().to_string(), &format!("{}/{}", remote_root, u_path))
+                  tasks.push(Box::new(rclone!("copy", &c.path.display().to_string(), &format!("{}/{}", remote_root, upload_path(&c.path, false)))
                     .output_async()
                     .map_err(|e| panic!("failed to collect output: {}", e))
-                    .map(move |output| format!("COPY path: {}\nstatus: {}\noutput: {}", u_path, output.status.success(), str::from_utf8(&output.stdout).unwrap()))
+                    .map(move |output| format!("COPY path: {}\nstatus: {}\noutput: {}", print_path, output.status.success(), str::from_utf8(&output.stdout).unwrap()))
                   ));
                 }
-              },
-              Op::RENAME => {
-              let from_u_path = upload_path(&c.old_path, true);
-              let to_u_path = upload_path(&c.path, true);
+              }
+            },
+            Op::RENAME => {
+              if let Some(_) = legal_paths_updated.iter().filter(|(_, p)| p == &c.path).next() {
+                let from_u_path = upload_path(&c.old_path, true);
+                let to_u_path = upload_path(&c.path, true);
 
-              tasks.push(Box::new(rclone!("moveto", &format!("{}/{}", remote_root, &from_u_path), &format!("{}/{}", remote_root, &to_u_path))
-                .output_async()
-                .map_err(|e| panic!("failed to collect output: {}", e))
-                .map(move |output| format!("RENAME from: {}, to: {}\nstatus: {}\noutput: {}", from_u_path, to_u_path, output.status.success(), str::from_utf8(&output.stdout).unwrap()))
-              ));
-              },
-              Op::REMOVE => {
+                tasks.push(Box::new(rclone!("moveto", &format!("{}/{}", remote_root, &from_u_path), &format!("{}/{}", remote_root, &to_u_path))
+                  .output_async()
+                  .map_err(|e| panic!("failed to collect output: {}", e))
+                  .map(move |output| format!("RENAME from: {}, to: {}\nstatus: {}\noutput: {}", from_u_path, to_u_path, output.status.success(), str::from_utf8(&output.stdout).unwrap()))
+                ));
+              }
+            },
+            Op::REMOVE => {
+              if let Some((is_file, _)) = legal_paths.iter().filter(|(_, p)| p == &c.path).next() {
                 let u_path = upload_path(&c.path, false);
 
                 if *is_file {
@@ -228,9 +241,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                   ));
                 }
               }
-              _ => (),
-            };
-          }
+            }
+            _ => (),
+          };
         }
       }
     }
@@ -244,6 +257,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     println!("{:?}", paths);
+
+    legal_paths = legal_paths_updated;
   }
 
   Ok(())
