@@ -4,8 +4,12 @@ use notify::{RecommendedWatcher, Watcher, RecursiveMode, DebouncedEvent};
 extern crate ignore;
 use ignore::WalkBuilder;
 
+#[macro_use]
+extern crate clap;
+use clap::{Arg, App};
+
 use std::{
-  process::Command,
+  process::{exit, Command},
   error::Error,
   time::Duration,
   sync::mpsc,
@@ -26,13 +30,51 @@ macro_rules! rclone {
   }};
 }
 
+macro_rules! exit {
+  ($e:expr) => {{
+    eprintln!("{}", $e);
+    exit(1);
+  }};
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
-  let root = "F:\\sync";
+  let matches = App::new("rclone_ignore")
+                  .about("Ignores glob patterns specified in a `.gitignore` or `.ignore` file for usage with rclone")
+                  .arg(Arg::with_name("local-root")
+                    .short("l")
+                    .long("local-root")
+                    .takes_value(true)
+                    .max_values(1)
+                    .required(true)
+                    .help("Specifies local root path for sync"))
+                  .arg(Arg::with_name("remote-root")
+                    .short("r")
+                    .long("remote-root")
+                    .takes_value(true)
+                    .max_values(1)
+                    .required(true)
+                    .help("Specifies remote root path for sync [remote:/path]"))
+                  .get_matches();
+
+  let root = if let Ok(lr) = value_t!(matches, "local-root", String) {
+    lr
+  } else {
+    exit!("\"local-root\" is invalid.");
+  };
+
   let root = &canonicalize(&root).unwrap().display().to_string()[4..];
 
-  let remote_root = "db:/";
+  if !Path::new(root).exists() {
+    exit!("\"local-root\" does not exist locally.");
+  }
 
-  rclone!("copy", remote_root, root, "--progress", "--checkers", "128", "--retries", "1").status()?;
+  let remote_root = if let Ok(rr) = value_t!(matches, "remote-root", String) {
+    rr
+  } else {
+    exit!("\"remote-root\" is invalid.");
+  };
+
+  rclone!("copy", &remote_root, root, "--progress", "--checkers", "128", "--retries", "1").status()?;
 
   println!("Fetched data from remote.");
 

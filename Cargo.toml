@@ -7,3 +7,4 @@ edition = "2018"
 [dependencies]
 notify = "4.0.6"
 ignore = "0.4.4"
+clap = "2.32.0"
