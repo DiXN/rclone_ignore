@@ -162,10 +162,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut tasks: Vec<Box<Future<Item = String, Error = ()> + Send>> = Vec::new();
 
     for chunk in paths.chunks(2) {
-      if chunk.len() > 1 && chunk[0].op == Op::REMOVE &&
-        (chunk[1].op == Op::CREATE || chunk[1].op == Op::WRITE) &&
-          legal_paths.iter().filter(|(_, p)| p == &chunk[0].path).next().is_some() &&
-            legal_paths_updated.iter().filter(|(_, p)| p == &chunk[1].path).next().is_some() {
+      if chunk.len() > 1 &&
+          chunk[0].op == Op::REMOVE && chunk[1].op == Op::CREATE &&
+            legal_paths.iter().filter(|(_, p)| p == &chunk[0].path).next().is_some() &&
+              legal_paths_updated.iter().filter(|(_, p)| p == &chunk[1].path).next().is_some() {
         let from_u_path = upload_path(&chunk[0].path, true);
         let to_u_path = upload_path(&chunk[1].path, true);
 
