@@ -8,6 +8,9 @@ use ignore::WalkBuilder;
 extern crate clap;
 use clap::{Arg, App};
 
+extern crate which;
+use which::which;
+
 use std::{
   process::{exit, Command},
   error::Error,
@@ -73,6 +76,10 @@ fn main() -> Result<(), Box<dyn Error>> {
   } else {
     exit!("\"remote-root\" is invalid.");
   };
+
+  if which("rclone").is_err() {
+    exit!("You need to install rclone fist.");
+  }
 
   rclone!("copy", &remote_root, root, "--progress", "--checkers", "128", "--retries", "1").status()?;
 
