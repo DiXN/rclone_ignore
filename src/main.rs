@@ -63,6 +63,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .max_values(1)
                     .required(true)
                     .help("Specifies remote root path for sync [remote:/path]"))
+                  .arg(Arg::with_name("threads")
+                    .short("t")
+                    .long("threads")
+                    .takes_value(true)
+                    .max_values(1)
+                    .help("Defines maximum amount of concurrently running commands"))
                   .get_matches();
 
   let root = if let Ok(lr) = value_t!(matches, "local-root", String) {
@@ -89,7 +95,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   rclone!("copy", &remote_root, root, "--progress", "--checkers", "128", "--retries", "1").status()?;
 
-  rayon::ThreadPoolBuilder::new().num_threads(3).build_global().unwrap();
+  if let Ok(t) = value_t!(matches, "threads", usize) {
+    rayon::ThreadPoolBuilder::new().num_threads(t).build_global().unwrap();
+  } else {
+    rayon::ThreadPoolBuilder::new().num_threads(3).build_global().unwrap();
+  };
 
   println!("Fetched data from remote.");
 
