@@ -12,22 +12,15 @@ use std::{
   error::Error,
   time::Duration,
   sync::mpsc,
-  fs::canonicalize,
   path::{PathBuf, Path}
 };
 
 mod pathop;
 use crate::pathop::{Op, PathOp};
 
+#[macro_use]
 mod args;
-use crate::args::{get_matches, get_ignores};
-
-macro_rules! exit {
-  ($e:expr) => {{
-    error!("{}", $e);
-    exit(1);
-  }};
-}
+use crate::args::get_options;
 
 fn main() -> Result<(), Box<dyn Error>> {
   let env = Env::default()
@@ -35,41 +28,16 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   Builder::from_env(env).init();
 
-  let matches = get_matches();
-
-  let root = if let Ok(lr) = value_t!(matches, "local-root", String) {
-    lr
-  } else {
-    exit!("\"local-root\" is invalid.");
-  };
-
-  if !Path::new(&root).exists() {
-    exit!("\"local-root\" does not exist locally.");
-  }
-
-  let root = &canonicalize(&root).unwrap().display().to_string()[4..];
-
-  let remote_root = if let Ok(rr) = value_t!(matches, "remote-root", String) {
-    rr
-  } else {
-    exit!("\"remote-root\" is invalid.");
-  };
+  let (root, remote_root, ignores) = get_options();
+  let root = root.as_path();
 
   if which("rclone").is_err() {
     exit!("You need to install rclone fist.");
   }
 
-  let ignores = get_ignores().expect("Cannot get ignores.");
-
-  Command::new("rclone").arg("copy").args(&[&remote_root, root, "--progress", "--checkers", "128", "--retries", "1"]).status()?;
+  Command::new("rclone").arg("copy").args(&[&remote_root, &root.display().to_string(), "--progress", "--checkers", "128", "--retries", "1"]).status()?;
 
   println!("Fetched data from remote.");
-
-  if let Ok(t) = value_t!(matches, "threads", usize) {
-    rayon::ThreadPoolBuilder::new().num_threads(t).build_global().unwrap();
-  } else {
-    rayon::ThreadPoolBuilder::new().num_threads(3).build_global().unwrap();
-  };
 
   let (tx, rx) = mpsc::channel();
   let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_millis(200)).expect("Cannot spawn watcher.");
@@ -106,28 +74,24 @@ fn main() -> Result<(), Box<dyn Error>> {
   loop {
     let mut paths = Vec::new();
 
-    if let Ok(notify) = rx.recv() {
+    let matcher = |notify: &DebouncedEvent, paths: &mut Vec<PathOp>| -> bool {
+      let mut skip = false;
       match notify {
-        DebouncedEvent::NoticeWrite(_) => continue,
-        DebouncedEvent::NoticeRemove(_) => continue,
         DebouncedEvent::Create(ref path) => paths.push(PathOp::new(path, path, Op::CREATE)),
         DebouncedEvent::Write(ref path) => paths.push(PathOp::new(path, path, Op::WRITE)),
         DebouncedEvent::Rename(ref old_path, ref path) => paths.push(PathOp::new(old_path, path, Op::RENAME)),
         DebouncedEvent::Remove(ref path) => paths.push(PathOp::new(path, path, Op::REMOVE)),
         DebouncedEvent::Chmod(ref path) => paths.push(PathOp::new(path, path, Op::CHMOD)),
-        _ => ()
+        _ => skip = true,
       }
+
+      skip
+    };
+
+    if let Ok(notify) = rx.recv() {
+      if matcher(&notify, &mut paths) { continue; }
       while let Ok(nf) = rx.recv_timeout(Duration::from_millis(500)) {
-        match nf {
-          DebouncedEvent::NoticeWrite(_) => continue,
-          DebouncedEvent::NoticeRemove(_) => continue,
-          DebouncedEvent::Create(ref path) => paths.push(PathOp::new(path, path, Op::CREATE)),
-          DebouncedEvent::Write(ref path) => paths.push(PathOp::new(path, path, Op::WRITE)),
-          DebouncedEvent::Rename(ref old_path, ref path) => paths.push(PathOp::new(old_path, path, Op::RENAME)),
-          DebouncedEvent::Remove(ref path) => paths.push(PathOp::new(path, path, Op::REMOVE)),
-          DebouncedEvent::Chmod(ref path) => paths.push(PathOp::new(path, path, Op::CHMOD)),
-          _ => ()
-        }
+        matcher(&nf, &mut paths);
       }
     }
 
@@ -143,9 +107,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         let from_u_path = upload_path(&chunk[0].path, true);
         let to_u_path = upload_path(&chunk[1].path, true);
 
-        tasks.push(format!("moveto;{};{};{}",
-          &format!("{}/{}", remote_root, upload_path(&chunk[0].path, true)),
-          &format!("{}/{}", remote_root, upload_path(&chunk[1].path, true)),
+        tasks.push(
+          format!("moveto;{};{};{}",
+          &format!("{}/{}", remote_root, &from_u_path),
+          &format!("{}/{}", remote_root, &to_u_path),
           &format!("MOVE from: {} to: {}", from_u_path, to_u_path)
         ));
       } else {
@@ -158,13 +123,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                   let print_path = upload_path(&c.path, true);
 
                   if *is_file {
-                    tasks.push(format!("copy;{};{};{}",
+                    tasks.push(
+                      format!("copy;{};{};{}",
                       &c.path.display().to_string(),
                       &format!("{}/{}", remote_root, &u_path),
                       &format!("COPY {}", print_path)
                     ));
                   } else {
-                    tasks.push(format!("mkdir;{};{}",
+                    tasks.push(
+                      format!("mkdir;{};{}",
                       &format!("{}/{}", remote_root, &u_path),
                       &format!("MKDIR {}", print_path)
                     ));
@@ -174,7 +141,8 @@ fn main() -> Result<(), Box<dyn Error>> {
               Op::WRITE => {
                 if let Some((is_file, _)) = legal_paths_updated.iter().filter(|(_, p)| p == &c.path).next() {
                   if *is_file {
-                    tasks.push(format!("copy;{};{};{}",
+                    tasks.push(
+                      format!("copy;{};{};{}",
                       &c.path.display().to_string(),
                       &format!("{}/{}", remote_root, upload_path(&c.path, false)),
                       &format!("COPY {}", upload_path(&c.path, true))
@@ -187,7 +155,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                   let from_u_path = upload_path(&c.old_path, true);
                   let to_u_path = upload_path(&c.path, true);
 
-                  tasks.push(format!("moveto;{};{};{}",
+                  tasks.push(
+                    format!("moveto;{};{};{}",
                     &format!("{}/{}", remote_root, &from_u_path),
                     &format!("{}/{}", remote_root, &to_u_path),
                     &format!("RENAME from: {} to: {}", from_u_path, to_u_path)
@@ -199,12 +168,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                   let u_path = upload_path(&c.path, false);
 
                   if *is_file {
-                    tasks.push(format!("delete;{};{}",
+                    tasks.push(
+                      format!("delete;{};{}",
                       &format!("{}/{}", remote_root, u_path),
                       &format!("DELETE {}", u_path),
                     ));
                   } else {
-                    tasks.push(format!("purge;{};{}",
+                    tasks.push(
+                      format!("purge;{};{}",
                       &format!("{}/{}", remote_root, u_path),
                       &format!("PURGE {}", u_path),
                     ));
@@ -223,7 +194,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         let split = t.split(";").collect::<Vec<&str>>();
 
         match Command::new("rclone").args(&split[0..split.len() - 1]).status() {
-          Ok(s) => info!("{} => {}.", split[split.len() - 1], if s.success() {"successful"} else {"unsuccessful"}),
+          Ok(s) => {
+            if s.success() {
+              info!("{} => successfull.", split[split.len() - 1]);
+            } else {
+              error!("{} => unsucessfull.", split[split.len() - 1]);
+            }
+          },
           Err(e) => error!("{}", e)
         };
       });
