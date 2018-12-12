@@ -4,6 +4,11 @@ use notify::{RecommendedWatcher, Watcher, RecursiveMode, DebouncedEvent};
 extern crate ignore;
 use ignore::WalkBuilder;
 
+#[macro_use] extern crate log;
+
+extern crate env_logger;
+use env_logger::{Builder, Env};
+
 #[macro_use]
 extern crate clap;
 
@@ -30,12 +35,17 @@ use args::get_matches;
 
 macro_rules! exit {
   ($e:expr) => {{
-    eprintln!("{}", $e);
+    error!("{}", $e);
     exit(1);
   }};
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+  let env = Env::default()
+    .filter_or(env_logger::DEFAULT_FILTER_ENV, "info");
+
+  Builder::from_env(env).init();
+
   let matches = get_matches();
 
   let root = if let Ok(lr) = value_t!(matches, "local-root", String) {
@@ -44,11 +54,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     exit!("\"local-root\" is invalid.");
   };
 
-  let root = &canonicalize(&root).unwrap().display().to_string()[4..];
-
-  if !Path::new(root).exists() {
+  if !Path::new(&root).exists() {
     exit!("\"local-root\" does not exist locally.");
   }
+
+  let root = &canonicalize(&root).unwrap().display().to_string()[4..];
 
   let remote_root = if let Ok(rr) = value_t!(matches, "remote-root", String) {
     rr
@@ -60,7 +70,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     exit!("You need to install rclone fist.");
   }
 
-  Command::new("rclone").arg("copy").args(&[&remote_root, root, "--progress", "--checkers", "128", "--retries", "1"]).status()?;
+  //Command::new("rclone").arg("copy").args(&[&remote_root, root, "--progress", "--checkers", "128", "--retries", "1"]).status()?;
 
   if let Ok(t) = value_t!(matches, "threads", usize) {
     rayon::ThreadPoolBuilder::new().num_threads(t).build_global().unwrap();
@@ -219,8 +229,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         let split = t.split(";").collect::<Vec<&str>>();
 
         match Command::new("rclone").args(&split[0..split.len() - 1]).status() {
-          Ok(s) => println!("{} => {}.", split[split.len() - 1], if s.success() {"successful"} else {"unsuccessful"}),
-          Err(e) => println!("{}", e)
+          Ok(s) => info!("{} => {}.", split[split.len() - 1], if s.success() {"successful"} else {"unsuccessful"}),
+          Err(e) => error!("{}", e)
         };
       });
     }
