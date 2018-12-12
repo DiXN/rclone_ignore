@@ -1,21 +1,10 @@
-extern crate notify;
-use notify::{RecommendedWatcher, Watcher, RecursiveMode, DebouncedEvent};
-
-extern crate ignore;
-use ignore::WalkBuilder;
-
 #[macro_use] extern crate log;
+#[macro_use] extern crate clap;
 
-extern crate env_logger;
+use notify::{RecommendedWatcher, Watcher, RecursiveMode, DebouncedEvent};
+use ignore::WalkBuilder;
 use env_logger::{Builder, Env};
-
-#[macro_use]
-extern crate clap;
-
-extern crate which;
 use which::which;
-
-extern crate rayon;
 use rayon::prelude::*;
 
 use std::{
@@ -28,10 +17,10 @@ use std::{
 };
 
 mod pathop;
-use pathop::{Op, PathOp};
+use crate::pathop::{Op, PathOp};
 
 mod args;
-use args::get_matches;
+use crate::args::get_matches;
 
 macro_rules! exit {
   ($e:expr) => {{
@@ -70,7 +59,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     exit!("You need to install rclone fist.");
   }
 
-  //Command::new("rclone").arg("copy").args(&[&remote_root, root, "--progress", "--checkers", "128", "--retries", "1"]).status()?;
+  Command::new("rclone").arg("copy").args(&[&remote_root, root, "--progress", "--checkers", "128", "--retries", "1"]).status()?;
 
   if let Ok(t) = value_t!(matches, "threads", usize) {
     rayon::ThreadPoolBuilder::new().num_threads(t).build_global().unwrap();
