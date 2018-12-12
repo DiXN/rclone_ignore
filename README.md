@@ -1,1 +1,1 @@
-rclone_ignore
+# rclone_ignore  · [![Build Status](https://travis-ci.org/DiXN/rclone_ignore.svg?branch=master)](https://travis-ci.org/DiXN/rclone_ignore)

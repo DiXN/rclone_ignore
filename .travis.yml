@@ -1,0 +1,17 @@
+language: rust
+cache: cargo
+
+rust:
+  - stable
+  - beta
+  - nightly
+
+os:
+  - linux
+  - osx
+
+script:
+  cargo build --verbose
+
+notifications:
+  email: false
