@@ -20,7 +20,7 @@ mod pathop;
 use crate::pathop::{Op, PathOp};
 
 mod args;
-use crate::args::get_matches;
+use crate::args::{get_matches, get_ignores};
 
 macro_rules! exit {
   ($e:expr) => {{
@@ -59,15 +59,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     exit!("You need to install rclone fist.");
   }
 
+  let ignores = get_ignores().expect("Cannot get ignores.");
+
   Command::new("rclone").arg("copy").args(&[&remote_root, root, "--progress", "--checkers", "128", "--retries", "1"]).status()?;
+
+  println!("Fetched data from remote.");
 
   if let Ok(t) = value_t!(matches, "threads", usize) {
     rayon::ThreadPoolBuilder::new().num_threads(t).build_global().unwrap();
   } else {
     rayon::ThreadPoolBuilder::new().num_threads(3).build_global().unwrap();
   };
-
-  println!("Fetched data from remote.");
 
   let (tx, rx) = mpsc::channel();
   let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_millis(200)).expect("Cannot spawn watcher.");
@@ -136,7 +138,8 @@ fn main() -> Result<(), Box<dyn Error>> {
       if chunk.len() > 1 &&
           chunk[0].op == Op::REMOVE && chunk[1].op == Op::CREATE &&
             legal_paths.iter().filter(|(_, p)| p == &chunk[0].path).next().is_some() &&
-              legal_paths_updated.iter().filter(|(_, p)| p == &chunk[1].path).next().is_some() {
+              legal_paths_updated.iter().filter(|(_, p)| p == &chunk[1].path).next().is_some() &&
+                ignores.matches(&chunk[0].path).is_empty() && ignores.matches(&chunk[1].path).is_empty() {
         let from_u_path = upload_path(&chunk[0].path, true);
         let to_u_path = upload_path(&chunk[1].path, true);
 
@@ -144,71 +147,73 @@ fn main() -> Result<(), Box<dyn Error>> {
           &format!("{}/{}", remote_root, upload_path(&chunk[0].path, true)),
           &format!("{}/{}", remote_root, upload_path(&chunk[1].path, true)),
           &format!("MOVE from: {} to: {}", from_u_path, to_u_path)
-         ));
+        ));
       } else {
         for c in chunk {
-          match &c.op {
-            Op::CREATE => {
-              if let Some((is_file, _)) = legal_paths_updated.iter().filter(|(_, p)| p == &c.path).next() {
-                let u_path = upload_path(&c.path, false);
-                let print_path = upload_path(&c.path, true);
+          if ignores.matches(&c.path).is_empty() {
+            match &c.op {
+              Op::CREATE => {
+                if let Some((is_file, _)) = legal_paths_updated.iter().filter(|(_, p)| p == &c.path).next() {
+                  let u_path = upload_path(&c.path, false);
+                  let print_path = upload_path(&c.path, true);
 
-                if *is_file {
-                  tasks.push(format!("copy;{};{};{}",
-                    &c.path.display().to_string(),
-                    &format!("{}/{}", remote_root, &u_path),
-                    &format!("COPY {}", print_path)
-                  ));
-                } else {
-                  tasks.push(format!("mkdir;{};{}",
-                    &format!("{}/{}", remote_root, &u_path),
-                    &format!("MKDIR {}", print_path)
+                  if *is_file {
+                    tasks.push(format!("copy;{};{};{}",
+                      &c.path.display().to_string(),
+                      &format!("{}/{}", remote_root, &u_path),
+                      &format!("COPY {}", print_path)
+                    ));
+                  } else {
+                    tasks.push(format!("mkdir;{};{}",
+                      &format!("{}/{}", remote_root, &u_path),
+                      &format!("MKDIR {}", print_path)
+                    ));
+                  }
+                }
+              },
+              Op::WRITE => {
+                if let Some((is_file, _)) = legal_paths_updated.iter().filter(|(_, p)| p == &c.path).next() {
+                  if *is_file {
+                    tasks.push(format!("copy;{};{};{}",
+                      &c.path.display().to_string(),
+                      &format!("{}/{}", remote_root, upload_path(&c.path, false)),
+                      &format!("COPY {}", upload_path(&c.path, true))
+                    ));
+                  }
+                }
+              },
+              Op::RENAME => {
+                if let Some(_) = legal_paths_updated.iter().filter(|(_, p)| p == &c.path).next() {
+                  let from_u_path = upload_path(&c.old_path, true);
+                  let to_u_path = upload_path(&c.path, true);
+
+                  tasks.push(format!("moveto;{};{};{}",
+                    &format!("{}/{}", remote_root, &from_u_path),
+                    &format!("{}/{}", remote_root, &to_u_path),
+                    &format!("RENAME from: {} to: {}", from_u_path, to_u_path)
                   ));
                 }
-              }
-            },
-            Op::WRITE => {
-              if let Some((is_file, _)) = legal_paths_updated.iter().filter(|(_, p)| p == &c.path).next() {
-                if *is_file {
-                  tasks.push(format!("copy;{};{};{}",
-                    &c.path.display().to_string(),
-                    &format!("{}/{}", remote_root, upload_path(&c.path, false)),
-                    &format!("COPY {}", upload_path(&c.path, true))
-                  ));
+              },
+              Op::REMOVE => {
+                if let Some((is_file, _)) = legal_paths.iter().filter(|(_, p)| p == &c.path).next() {
+                  let u_path = upload_path(&c.path, false);
+
+                  if *is_file {
+                    tasks.push(format!("delete;{};{}",
+                      &format!("{}/{}", remote_root, u_path),
+                      &format!("DELETE {}", u_path),
+                    ));
+                  } else {
+                    tasks.push(format!("purge;{};{}",
+                      &format!("{}/{}", remote_root, u_path),
+                      &format!("PURGE {}", u_path),
+                    ));
+                  }
                 }
               }
-            },
-            Op::RENAME => {
-              if let Some(_) = legal_paths_updated.iter().filter(|(_, p)| p == &c.path).next() {
-                let from_u_path = upload_path(&c.old_path, true);
-                let to_u_path = upload_path(&c.path, true);
-
-                tasks.push(format!("moveto;{};{};{}",
-                  &format!("{}/{}", remote_root, &from_u_path),
-                  &format!("{}/{}", remote_root, &to_u_path),
-                  &format!("RENAME from: {} to: {}", from_u_path, to_u_path)
-                ));
-              }
-            },
-            Op::REMOVE => {
-              if let Some((is_file, _)) = legal_paths.iter().filter(|(_, p)| p == &c.path).next() {
-                let u_path = upload_path(&c.path, false);
-
-                if *is_file {
-                  tasks.push(format!("delete;{};{}",
-                    &format!("{}/{}", remote_root, u_path),
-                    &format!("DELETE {}", u_path),
-                  ));
-                } else {
-                  tasks.push(format!("purge;{};{}",
-                    &format!("{}/{}", remote_root, u_path),
-                    &format!("PURGE {}", u_path),
-                  ));
-                }
-              }
-            }
-            _ => (),
-          };
+              _ => (),
+            };
+          }
         }
       }
     }

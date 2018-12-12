@@ -1,4 +1,5 @@
 use clap::{Arg, App, ArgMatches};
+use globset::{Glob, GlobSet, GlobSetBuilder, Error};
 
 pub fn get_matches() -> ArgMatches<'static> {
   App::new("rclone_ignore")
@@ -30,4 +31,14 @@ pub fn get_matches() -> ArgMatches<'static> {
         .help("Defines maximum amount of concurrently running commands")
     )
     .get_matches()
+}
+
+pub fn get_ignores() -> Result<GlobSet, Error> {
+  let mut builder = GlobSetBuilder::new();
+
+  builder.add(Glob::new("*desktop.ini")?);
+  builder.add(Glob::new("*Thumbs.db")?);
+  builder.add(Glob::new("*.DS_Store")?);
+
+  Ok(builder.build()?)
 }
