@@ -30,6 +30,15 @@ pub fn get_matches() -> ArgMatches<'static> {
         .max_values(1)
         .help("Defines maximum amount of concurrently running commands")
     )
+    .arg(
+      Arg::with_name("ignores")
+        .short("i")
+        .long("ignores")
+        .takes_value(true)
+        .min_values(1)
+        .multiple(true)
+        .help("Ignores custom glob patterns")
+    )
     .get_matches()
 }
 
@@ -39,6 +48,18 @@ pub fn get_ignores() -> Result<GlobSet, Error> {
   builder.add(Glob::new("*desktop.ini")?);
   builder.add(Glob::new("*Thumbs.db")?);
   builder.add(Glob::new("*.DS_Store")?);
+
+  let matches = get_matches();
+
+  if matches.is_present("ignores") {
+    if let Ok(ignores) = values_t!(matches, "ignores", String) {
+      for ignore in ignores {
+        builder.add(Glob::new(&ignore)?);
+      }
+    } else {
+      error!("\"ignores\" are invalid.");
+    }
+  }
 
   Ok(builder.build()?)
 }
