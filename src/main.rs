@@ -6,7 +6,6 @@ use ignore::WalkBuilder;
 
 #[macro_use]
 extern crate clap;
-use clap::{Arg, App};
 
 extern crate which;
 use which::which;
@@ -19,25 +18,15 @@ use std::{
   error::Error,
   time::Duration,
   sync::mpsc,
+  fs::canonicalize,
   path::{PathBuf, Path}
 };
-
-use std::fs::canonicalize;
 
 mod pathop;
 use pathop::{Op, PathOp};
 
-macro_rules! rclone {
-  () => {
-    Command::new("rclone")
-  };
-  ($e:expr) => {{
-    rclone!().arg($e)
-  }};
-  ($($es:expr),+) => {{
-    rclone!().args(&[$($es),+])
-  }};
-}
+mod args;
+use args::get_matches;
 
 macro_rules! exit {
   ($e:expr) => {{
@@ -47,29 +36,7 @@ macro_rules! exit {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-  let matches = App::new("rclone_ignore")
-                  .about("Ignores glob patterns specified in a `.gitignore` or `.ignore` file for usage with rclone")
-                  .arg(Arg::with_name("local-root")
-                    .short("l")
-                    .long("local-root")
-                    .takes_value(true)
-                    .max_values(1)
-                    .required(true)
-                    .help("Specifies local root path for sync"))
-                  .arg(Arg::with_name("remote-root")
-                    .short("r")
-                    .long("remote-root")
-                    .takes_value(true)
-                    .max_values(1)
-                    .required(true)
-                    .help("Specifies remote root path for sync [remote:/path]"))
-                  .arg(Arg::with_name("threads")
-                    .short("t")
-                    .long("threads")
-                    .takes_value(true)
-                    .max_values(1)
-                    .help("Defines maximum amount of concurrently running commands"))
-                  .get_matches();
+  let matches = get_matches();
 
   let root = if let Ok(lr) = value_t!(matches, "local-root", String) {
     lr
@@ -93,7 +60,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     exit!("You need to install rclone fist.");
   }
 
-  rclone!("copy", &remote_root, root, "--progress", "--checkers", "128", "--retries", "1").status()?;
+  Command::new("rclone").arg("copy").args(&[&remote_root, root, "--progress", "--checkers", "128", "--retries", "1"]).status()?;
 
   if let Ok(t) = value_t!(matches, "threads", usize) {
     rayon::ThreadPoolBuilder::new().num_threads(t).build_global().unwrap();
