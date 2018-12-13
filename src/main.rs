@@ -6,12 +6,15 @@ use ignore::WalkBuilder;
 use env_logger::{Builder, Env};
 use which::which;
 use rayon::prelude::*;
+use walkdir::WalkDir;
 
 use std::{
   process::{exit, Command},
   error::Error,
   time::Duration,
   sync::mpsc,
+  fs::File,
+  io::prelude::*,
   path::{PathBuf, Path}
 };
 
@@ -35,14 +38,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     exit!("You need to install rclone fist.");
   }
 
-  Command::new("rclone").arg("copy").args(&[&remote_root, &root.display().to_string(), "--progress", "--checkers", "128", "--retries", "1"]).status()?;
-
-  println!("Fetched data from remote.");
-
-  let (tx, rx) = mpsc::channel();
-  let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_millis(200)).expect("Cannot spawn watcher.");
-  watcher.watch(root, RecursiveMode::Recursive).expect("Cannot watch directory watcher.");
-
   let get_included_paths = || WalkBuilder::new(root).hidden(false).build().map(|w| {
     let path = w.unwrap().into_path();
     let is_file = path.is_file();
@@ -54,22 +49,43 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let relative = if !preserve_file {
       if path.is_file() {
-        relative.parent().unwrap()
+        relative.parent().unwrap().display().to_string()
       } else {
-        relative
+        relative.display().to_string()
       }
     } else {
-      relative
+      if path.is_file() {
+        relative.display().to_string()
+      } else {
+        format!("{}/", relative.display())
+      }
     };
 
     if cfg!(target_os = "windows") {
-      str::replace(&relative.display().to_string(), "\\", "/")
+      str::replace(&relative, "\\", "/")
     } else {
-      relative.display().to_string()
+      relative
     }
   };
 
+  let all_paths = WalkDir::new(root).into_iter().map(|p| p.unwrap().into_path()).collect::<Vec<_>>();
   let mut legal_paths = get_included_paths();
+
+  let mut file = File::create("excludes.txt")?;
+
+  for f in all_paths.iter().filter(|&t| !legal_paths.contains(&(t.is_file(), t.to_path_buf()))) {
+    write!(file, "{}\n", upload_path(&f, true))?;
+  }
+
+  Command::new("rclone").arg("sync")
+    .args(&[&remote_root, &root.display().to_string(),
+      "--exclude-from", "excludes.txt", "--progress", "--checkers", "128", "--retries", "1"]).status()?;
+
+  info!("Synced data with remote.");
+
+  let (tx, rx) = mpsc::channel();
+  let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_millis(200)).expect("Cannot spawn watcher.");
+  watcher.watch(root, RecursiveMode::Recursive).expect("Cannot watch directory watcher.");
 
   loop {
     let mut paths = Vec::new();
