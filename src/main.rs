@@ -9,6 +9,7 @@ use rayon::prelude::*;
 use walkdir::WalkDir;
 
 use std::{
+  env,
   process::{exit, Command},
   error::Error,
   time::Duration,
@@ -71,7 +72,10 @@ fn main() -> Result<(), Box<dyn Error>> {
   let all_paths = WalkDir::new(root).into_iter().map(|p| p.unwrap().into_path()).collect::<Vec<_>>();
   let mut legal_paths = get_included_paths();
 
-  let mut file = File::create("excludes.txt")?;
+  let mut dir = env::temp_dir();
+  dir.push("rclone_excludes.txt");
+
+  let mut file = File::create(&dir)?;
 
   for f in all_paths.iter().filter(|&t| !legal_paths.contains(&(t.is_file(), t.to_path_buf()))) {
     write!(file, "{}\n", upload_path(&f, true))?;
@@ -79,7 +83,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   Command::new("rclone").arg("sync")
     .args(&[&remote_root, &root.display().to_string(),
-      "--exclude-from", "excludes.txt", "--progress", "--checkers", "128", "--retries", "1"]).status()?;
+      "--exclude-from", dir.to_str().unwrap(), "--progress", "--checkers", "128", "--retries", "1"]).status()?;
 
   info!("Synced data with remote.");
 
