@@ -1,8 +1,12 @@
 use clap::{Arg, App, ArgMatches};
-use globset::{Glob, GlobSet, GlobSetBuilder, Error};
+use globset::{Glob, GlobSet, GlobSetBuilder, Error as Glob_Error};
 
 use std::{
-  process::exit,
+  str,
+  env,
+  error::Error as Std_Error,
+  process::{exit, Command, Stdio},
+  io::{BufWriter, Write},
   fs::canonicalize,
   path::{PathBuf, Path}
 };
@@ -52,10 +56,16 @@ pub fn get_matches() -> ArgMatches<'static> {
         .multiple(true)
         .help("Ignores custom glob patterns")
     )
+    .arg(
+      Arg::with_name("autostart")
+        .short("a")
+        .long("autostart")
+        .help("Runs rclone_ignore on system startup")
+    )
     .get_matches()
 }
 
-fn get_ignores() -> Result<GlobSet, Error> {
+fn get_ignores() -> Result<GlobSet, Glob_Error> {
   let mut builder = GlobSetBuilder::new();
 
   builder.add(Glob::new("*desktop.ini")?);
@@ -75,6 +85,63 @@ fn get_ignores() -> Result<GlobSet, Error> {
   }
 
   Ok(builder.build()?)
+}
+
+#[cfg(target_os = "windows")]
+fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<(), Box<Std_Error>> {
+  let auto_cmd = Command::new("powershell")
+    .args(&["-Command", "[environment]::getfolderpath(\"Startup\")"])
+    .output()?;
+
+  let auto_path = str::from_utf8(&auto_cmd.stdout)?.trim();
+
+  let mut process = Command::new("powershell")
+    .args(&["-Command", "-"])
+    .stdin(Stdio::piped())
+    .spawn()?;
+
+  {
+    let mut out_stdin = process.stdin.as_mut().expect("Could not collect stdin.");
+
+    let mut writer = BufWriter::new(&mut out_stdin);
+
+    match env::current_exe() {
+      Ok(exe_path) => {
+        writer.write_all("$WshShell = New-Object -comObject WScript.Shell;".as_bytes())?;
+        writer.write_all(format!("$Shortcut = $WshShell.CreateShortcut(\"{}\\rclone_ignore.lnk\");", auto_path).as_bytes())?;
+        writer.write_all(format!("$Shortcut.TargetPath = \"{}\";", exe_path.display()).as_bytes())?;
+
+        let mut arguments_str = String::new();
+        arguments_str.push_str(&format!("--local-root {} --remote-root {} ", &lr.to_str().unwrap()[4..], rr));
+
+        if let Ok(t) = value_t!(matches, "threads", usize) {
+          arguments_str.push_str(&format!("--threads {} ", t));
+        }
+
+        if let Ok(ignores) = values_t!(matches, "ignores", String) {
+          arguments_str.push_str("--ignores ");
+
+          for ignore in ignores {
+            arguments_str.push_str(&format!("{} ", ignore));
+          }
+        }
+
+        writer.write_all(format!("$Shortcut.Arguments = \"{}\";", arguments_str).as_bytes())?;
+        writer.write_all("$Shortcut.Save();".as_bytes())?;
+      },
+      Err(e) => panic!(e)
+    };
+  }
+
+  process.wait()?;
+
+  Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<(), Box<Std_Error>> {
+  info!("\"autostart\" is currently not supported on your system.");
+  Ok(())
 }
 
 pub fn get_options() -> (PathBuf, String, GlobSet) {
@@ -99,6 +166,13 @@ pub fn get_options() -> (PathBuf, String, GlobSet) {
   };
 
   let ignores = get_ignores().expect("Cannot get ignores.");
+
+  if matches.is_present("autostart") {
+    match autostart(&root, &remote_root, &matches) {
+      Ok(_) => info!("Autostart set."),
+      Err(e) => error!("{}", e)
+    }
+  }
 
   if let Ok(t) = value_t!(matches, "threads", usize) {
     rayon::ThreadPoolBuilder::new().num_threads(t).build_global().unwrap();
