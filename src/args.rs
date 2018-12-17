@@ -5,7 +5,7 @@ use std::{
   str,
   env,
   error::Error as Std_Error,
-  process::{exit, Command, Stdio},
+  process::{exit, Command, Stdio, ExitStatus},
   io::{BufWriter, Write},
   fs::canonicalize,
   path::{PathBuf, Path}
@@ -88,7 +88,7 @@ fn get_ignores() -> Result<GlobSet, Glob_Error> {
 }
 
 #[cfg(target_os = "windows")]
-fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<(), Box<Std_Error>> {
+fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<ExitStatus, Box<Std_Error>> {
   let auto_cmd = Command::new("powershell")
     .args(&["-Command", "[environment]::getfolderpath(\"Startup\")"])
     .output()?;
@@ -110,9 +110,24 @@ fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<(), Box<Std_Er
         writer.write_all("$WshShell = New-Object -comObject WScript.Shell;".as_bytes())?;
         writer.write_all(format!("$Shortcut = $WshShell.CreateShortcut(\"{}\\rclone_ignore.lnk\");", auto_path).as_bytes())?;
         writer.write_all(format!("$Shortcut.TargetPath = \"{}\";", exe_path.display()).as_bytes())?;
+        writer.write_all("$Shortcut.WindowStyle = 7;".as_bytes())?;
+
+        let local_root_str = lr.display().to_string();
+
+        let local_root_str = match local_root_str.chars().nth(local_root_str.len() - 1) {
+          Some(l_char) => {
+            if l_char != '\\' {
+              format!("{}\\", local_root_str)
+            } else {
+              local_root_str
+            }
+          },
+          None => panic!("Out of range."),
+        };
 
         let mut arguments_str = String::new();
-        arguments_str.push_str(&format!("--local-root {} --remote-root {} ", &lr.to_str().unwrap()[4..], rr));
+
+        arguments_str.push_str(&format!("--local-root {} --remote-root {} ", &local_root_str[4..], rr));
 
         if let Ok(t) = value_t!(matches, "threads", usize) {
           arguments_str.push_str(&format!("--threads {} ", t));
@@ -133,9 +148,7 @@ fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<(), Box<Std_Er
     };
   }
 
-  process.wait()?;
-
-  Ok(())
+  Ok(process.wait()?)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -169,7 +182,11 @@ pub fn get_options() -> (PathBuf, String, GlobSet) {
 
   if matches.is_present("autostart") {
     match autostart(&root, &remote_root, &matches) {
-      Ok(_) => info!("Autostart set."),
+      Ok(a) => if a.success() {
+        info!("Autostart set.");
+      } else {
+        error!("Failed to set autostart.")
+      },
       Err(e) => error!("{}", e)
     }
   }

@@ -10,12 +10,13 @@ use walkdir::WalkDir;
 
 use std::{
   env,
-  process::{exit, Command},
+  thread,
   error::Error,
   time::Duration,
   sync::mpsc,
   fs::File,
   io::prelude::*,
+  process::{exit, Command},
   path::{PathBuf, Path}
 };
 
@@ -81,15 +82,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     write!(file, "{}\n", upload_path(&f, true))?;
   }
 
+  let (tx, rx) = mpsc::channel();
+  let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_millis(200)).expect("Cannot spawn watcher.");
+  watcher.watch(root, RecursiveMode::Recursive).expect("Cannot watch directory watcher.");
+
   Command::new("rclone").arg("sync")
     .args(&[&remote_root, &root.display().to_string(),
       "--exclude-from", dir.to_str().unwrap(), "--progress", "--checkers", "128", "--retries", "1"]).status()?;
 
   info!("Synced data with remote.");
-
-  let (tx, rx) = mpsc::channel();
-  let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_millis(200)).expect("Cannot spawn watcher.");
-  watcher.watch(root, RecursiveMode::Recursive).expect("Cannot watch directory watcher.");
 
   loop {
     let mut paths = Vec::new();
@@ -181,6 +182,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     &format!("{}/{}", remote_root, &to_u_path),
                     &format!("RENAME from: {} to: {}", from_u_path, to_u_path)
                   ));
+
+                  thread::sleep(Duration::from_millis(100))
                 }
               },
               Op::REMOVE => {
