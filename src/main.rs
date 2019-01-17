@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   Builder::from_env(env).init();
 
-  let (root, remote_root, ignores) = get_options();
+  let (root, remote_root, ignores, checkers, tps_limit) = get_options();
   let root = root.as_path();
 
   if which("rclone").is_err() {
@@ -88,7 +88,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   Command::new("rclone").arg("sync")
     .args(&[&remote_root, &root.display().to_string(),
-      "--exclude-from", dir.to_str().unwrap(), "--progress", "--checkers", "128", "--retries", "1"]).status()?;
+      "--exclude-from", dir.to_str().unwrap(), "--progress", "--checkers",
+        &format!("{}", checkers), "--tpslimit", &format!("{}", tps_limit), "--retries", "1"]).status()?;
 
   info!("Synced data with remote.");
 

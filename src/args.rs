@@ -62,6 +62,21 @@ pub fn get_matches() -> ArgMatches<'static> {
         .long("autostart")
         .help("Runs rclone_ignore on system startup")
     )
+    .arg(
+      Arg::with_name("checkers")
+        .short("c")
+        .long("checkers")
+        .takes_value(true)
+        .max_values(1)
+        .help("Specifies amount of checkers used for sync")
+    )
+    .arg(
+      Arg::with_name("tps-limit")
+        .long("tps-limit")
+        .takes_value(true)
+        .max_values(1)
+        .help("Specifies amount of HTTP transactions per second")
+    )
     .get_matches()
 }
 
@@ -133,6 +148,14 @@ fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<ExitStatus, Bo
           arguments_str.push_str(&format!("--threads {} ", t));
         }
 
+        if let Ok(c) = value_t!(matches, "checkers", usize) {
+          arguments_str.push_str(&format!("--checkers {} ", c));
+        }
+
+        if let Ok(t) = value_t!(matches, "tps-limit", f32) {
+          arguments_str.push_str(&format!("--tpslimit {} ", t));
+        }
+
         if let Ok(ignores) = values_t!(matches, "ignores", String) {
           arguments_str.push_str("--ignores ");
 
@@ -157,7 +180,7 @@ fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<(), Box<Std_Er
   Ok(())
 }
 
-pub fn get_options() -> (PathBuf, String, GlobSet) {
+pub fn get_options() -> (PathBuf, String, GlobSet, usize, f32) {
   let matches = get_matches();
 
   let root = if let Ok(lr) = value_t!(matches, "local-root", String) {
@@ -197,5 +220,17 @@ pub fn get_options() -> (PathBuf, String, GlobSet) {
     rayon::ThreadPoolBuilder::new().num_threads(3).build_global().unwrap();
   };
 
-  (PathBuf::from(root), remote_root, ignores)
+  let checkers = if let Ok(c) = value_t!(matches, "checkers", usize) {
+    c
+  } else {
+    8
+  };
+
+  let tps_limit = if let Ok(t) = value_t!(matches, "tps-limit", f32) {
+    t
+  } else {
+    0.0
+  };
+
+  (PathBuf::from(root), remote_root, ignores, checkers, tps_limit)
 }
