@@ -10,6 +10,7 @@ use walkdir::WalkDir;
 
 use std::{
   env,
+  ptr,
   thread,
   error::Error,
   time::Duration,
@@ -27,6 +28,44 @@ use crate::pathop::{Op, PathOp};
 mod args;
 use crate::args::get_options;
 
+#[cfg(target_os = "windows")]
+fn init_tray() {
+  thread::spawn(move || {
+    if let Ok(mut app) = systray::Application::new() {
+      let window = unsafe { kernel32::GetConsoleWindow() };
+
+      if window != ptr::null_mut() {
+        unsafe {
+          user32::ShowWindow(window, 0);
+        }
+      }
+
+      app.add_menu_item(&"Show".to_string(), move |_| {
+        if window != ptr::null_mut() {
+          unsafe {
+            user32::ShowWindow(window, 5);
+          }
+        }
+      }).ok();
+
+      app.add_menu_item(&"Hide".to_string(), move |_| {
+        if window != ptr::null_mut() {
+          unsafe {
+            user32::ShowWindow(window, 0);
+          }
+        }
+      }).ok();
+
+      app.add_menu_item(&"Quit".to_string(), |_| {
+        exit(0);
+      }).ok();
+
+      println!("Tray intialized.");
+      app.wait_for_message();
+    }
+  });
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
   let env = Env::default()
     .filter_or(env_logger::DEFAULT_FILTER_ENV, "info");
@@ -39,6 +78,8 @@ fn main() -> Result<(), Box<dyn Error>> {
   if which("rclone").is_err() {
     exit!("You need to install rclone fist.");
   }
+
+  init_tray();
 
   let get_included_paths = || WalkBuilder::new(root).hidden(false).build().map(|w| {
     let path = w.unwrap().into_path();
