@@ -28,6 +28,11 @@ use crate::pathop::{Op, PathOp};
 mod args;
 use crate::args::get_options;
 
+#[cfg(not(target_os = "windows"))]
+fn init_tray() {
+  info!("\"tray\" is currently not supported on your system.");
+}
+
 #[cfg(target_os = "windows")]
 fn init_tray() {
   thread::spawn(move || {

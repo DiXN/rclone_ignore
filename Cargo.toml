@@ -14,9 +14,9 @@ log = "0.4.6"
 env_logger = "0.6.0"
 globset = "0.4.2"
 walkdir = "2.2.7"
-systray = "0.3.0"
 
 [target.'cfg(windows)'.dependencies]
 winapi = "*"
 user32-sys = "*"
 kernel32-sys = "*"
+systray = "0.3.0"

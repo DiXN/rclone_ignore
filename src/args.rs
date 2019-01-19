@@ -102,6 +102,17 @@ fn get_ignores() -> Result<GlobSet, Glob_Error> {
   Ok(builder.build()?)
 }
 
+#[cfg(not(target_os = "windows"))]
+fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<ExitStatus, Box<Std_Error>> {
+  info!("\"autostart\" is currently not supported on your system.");
+
+  let mut process = Command::new("echo")
+    .arg("\"autostart\" is currently not supported on your system.")
+    .spawn()?;
+
+  Ok(process.wait()?)
+}
+
 #[cfg(target_os = "windows")]
 fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<ExitStatus, Box<Std_Error>> {
   let auto_cmd = Command::new("powershell")
@@ -174,12 +185,6 @@ fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<ExitStatus, Bo
   Ok(process.wait()?)
 }
 
-#[cfg(not(target_os = "windows"))]
-fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<(), Box<Std_Error>> {
-  info!("\"autostart\" is currently not supported on your system.");
-  Ok(())
-}
-
 pub fn get_options() -> (PathBuf, String, GlobSet, usize, f32) {
   let matches = get_matches();
 
@@ -204,13 +209,17 @@ pub fn get_options() -> (PathBuf, String, GlobSet, usize, f32) {
   let ignores = get_ignores().expect("Cannot get ignores.");
 
   if matches.is_present("autostart") {
-    match autostart(&root, &remote_root, &matches) {
-      Ok(a) => if a.success() {
-        info!("Autostart set.");
-      } else {
-        error!("Failed to set autostart.")
-      },
-      Err(e) => error!("{}", e)
+    if cfg!(target_os = "windows") {
+      match autostart(&root, &remote_root, &matches) {
+        Ok(a) => if a.success() {
+          info!("Autostart set.");
+        } else {
+          error!("Failed to set autostart.")
+        },
+        Err(e) => error!("{}", e)
+      }
+    } else {
+      info!("\"autostart\" is currently not supported on your system.");
     }
   }
 
