@@ -45,6 +45,11 @@ fn init_tray() {
         }
       }
 
+      match app.set_icon_from_resource(&"tray_icon".to_string()) {
+        Ok(_) => (),
+        Err(e) => println!("{}", e)
+      };
+
       app.add_menu_item(&"Show".to_string(), move |_| {
         if window != ptr::null_mut() {
           unsafe {

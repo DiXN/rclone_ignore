@@ -20,3 +20,6 @@ winapi = "*"
 user32-sys = "*"
 kernel32-sys = "*"
 systray = "0.3.0"
+
+[target.'cfg(windows)'.build-dependencies]
+windres = "0.2"
