@@ -117,12 +117,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
   }
 
+  //Get all paths that are not ignored from a .gitignore or .ignore file.
   let get_included_paths = || WalkBuilder::new(root).hidden(false).build().map(|w| {
     let path = w.unwrap().into_path();
     let is_file = path.is_file();
     (is_file, path)
   }).collect::<Vec<(bool, PathBuf)>>();
 
+  //Transform local path to a valid remote path.
   let upload_path = |path: &Path, preserve_file: bool| {
     let relative = path.strip_prefix(root).unwrap();
 
@@ -147,6 +149,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
   };
 
+  //Get all paths starting from the specified local root path.
   let all_paths = WalkDir::new(root).into_iter().map(|p| p.unwrap().into_path()).collect::<Vec<_>>();
   let mut legal_paths = get_included_paths();
 
@@ -155,6 +158,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   let mut file = File::create(&dir)?;
 
+  //Write all invalid paths to a temporary file so rclones can ignore those paths during sync.
   for f in all_paths.iter().filter(|&t| !legal_paths.contains(&(t.is_file(), t.to_path_buf()))) {
     write!(file, "{}\n", upload_path(&f, true))?;
   }
@@ -195,6 +199,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut tasks = Vec::new();
 
     for chunk in paths.chunks(2) {
+      //Check for "move".
       if chunk.len() > 1 &&
           chunk[0].op == Op::REMOVE && chunk[1].op == Op::CREATE &&
             legal_paths.iter().filter(|(_, p)| p == &chunk[0].path).next().is_some() &&
@@ -258,6 +263,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     &format!("RENAME from: {} to: {}", from_u_path, to_u_path)
                   ));
 
+                  //Wait to prevent rename conflicts.
                   thread::sleep(Duration::from_millis(100))
                 }
               },
@@ -289,6 +295,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     if tasks.len() > 0 {
       tasks.into_par_iter().for_each(|t: String| {
+        //Get rclone command and arguments.
         let split = t.split(";").collect::<Vec<&str>>();
 
         match Command::new("rclone").args(&split[0..split.len() - 1]).status() {
