@@ -223,12 +223,6 @@ pub fn get_options() -> (PathBuf, String, GlobSet, usize, f32) {
     }
   }
 
-  if let Ok(t) = value_t!(matches, "threads", usize) {
-    rayon::ThreadPoolBuilder::new().num_threads(t).build_global().unwrap();
-  } else {
-    rayon::ThreadPoolBuilder::new().num_threads(3).build_global().unwrap();
-  };
-
   let checkers = if let Ok(c) = value_t!(matches, "checkers", usize) {
     c
   } else {

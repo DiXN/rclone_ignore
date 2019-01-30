@@ -17,7 +17,7 @@ use std::{
   sync::mpsc,
   fs::File,
   io::prelude::*,
-  process::{exit, Command},
+  process::{exit, Command, ExitStatus},
   path::{PathBuf, Path}
 };
 
@@ -26,18 +26,20 @@ use crate::pathop::{Op, PathOp};
 
 #[macro_use]
 mod args;
-use crate::args::get_options;
+use crate::args::{get_options, get_matches};
 
 #[cfg(not(target_os = "windows"))]
-fn init_tray() {
+fn init_tray(temp_dir: String) {
   info!("\"tray\" is currently not supported on your system.");
 }
 
 #[cfg(target_os = "windows")]
-fn init_tray() {
+fn init_tray(temp_dir: String) {
   thread::spawn(move || {
     if let Ok(mut app) = systray::Application::new() {
       let window = unsafe { kernel32::GetConsoleWindow() };
+
+      let (root, remote_root, _, checkers, tps_limit) = get_options();
 
       if window != ptr::null_mut() {
         unsafe {
@@ -49,6 +51,13 @@ fn init_tray() {
         Ok(_) => (),
         Err(e) => println!("{}", e)
       };
+
+      app.add_menu_item(&"Sync".to_string(), move |_| {
+        match sync(&remote_root, &temp_dir, &root, checkers, tps_limit) {
+          Ok(_) => (),
+          Err(_) => error!("Sync failed.")
+        }
+      }).ok();
 
       app.add_menu_item(&"Show".to_string(), move |_| {
         if window != ptr::null_mut() {
@@ -66,14 +75,23 @@ fn init_tray() {
         }
       }).ok();
 
-      app.add_menu_item(&"Quit".to_string(), |_| {
-        exit(0);
-      }).ok();
+      app.add_menu_item(&"Quit".to_string(), |_| exit(0)).ok();
 
       println!("Tray intialized.");
       app.wait_for_message();
     }
   });
+}
+
+fn sync(remote_root: &str, dir: &str, root: &Path, checkers: usize, tps_limit: f32) -> Result<ExitStatus, std::io::Error> {
+  let status = Command::new("rclone").arg("sync")
+    .args(&[&remote_root, &root.display().to_string().as_ref(),
+      "--exclude-from", dir, "--progress", "--checkers",
+        &format!("{}", checkers), "--tpslimit", &format!("{}", tps_limit), "--retries", "1"]).status();
+
+  info!("Synced data with remote.");
+
+  status
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -89,7 +107,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     exit!("You need to install rclone fist.");
   }
 
-  init_tray();
+  {
+    let matches = get_matches();
+
+    if let Ok(t) = value_t!(matches, "threads", usize) {
+      rayon::ThreadPoolBuilder::new().num_threads(t).build_global().unwrap();
+    } else {
+      rayon::ThreadPoolBuilder::new().num_threads(3).build_global().unwrap();
+    };
+  }
 
   let get_included_paths = || WalkBuilder::new(root).hidden(false).build().map(|w| {
     let path = w.unwrap().into_path();
@@ -133,12 +159,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     write!(file, "{}\n", upload_path(&f, true))?;
   }
 
-  Command::new("rclone").arg("sync")
-    .args(&[&remote_root, &root.display().to_string(),
-      "--exclude-from", dir.to_str().unwrap(), "--progress", "--checkers",
-        &format!("{}", checkers), "--tpslimit", &format!("{}", tps_limit), "--retries", "1"]).status()?;
+  init_tray(dir.display().to_string());
 
-  info!("Synced data with remote.");
+  sync(&remote_root, &dir.display().to_string(), root, checkers, tps_limit)?;
 
   let (tx, rx) = mpsc::channel();
   let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_millis(200)).expect("Cannot spawn watcher.");
