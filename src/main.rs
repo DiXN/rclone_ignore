@@ -14,7 +14,7 @@ use std::{
   thread,
   error::Error,
   time::Duration,
-  sync::mpsc,
+  sync::{mpsc, Arc},
   fs::File,
   io::prelude::*,
   process::{exit, Command, ExitStatus},
@@ -158,14 +158,23 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   {
     //Write all invalid paths to a temporary file so rclones can ignore those paths during sync.
-    let invalid_paths = all_paths
-                          .par_iter()
-                          .filter(|&t| !legal_paths.contains(&(t.is_file(), t.to_path_buf())))
-                          .map(|ip| upload_path(&ip, true)).collect::<Vec<_>>();
+    let num_tasks_per_chunk = all_paths.len() / num_cpus::get();
+    let legal_paths_arc = Arc::new(legal_paths.clone());
 
-    for ip in invalid_paths {
-      write!(file, "{}\n", ip)?;
-    }
+    let ips = crossbeam::scope(|scope| {
+      let threads = all_paths.chunks(num_tasks_per_chunk).map(|chunk| {
+        let cloned_arr = Arc::clone(&legal_paths_arc);
+        scope.spawn(move |_|
+          chunk.iter()
+            .filter(|&t| !cloned_arr.contains(&(t.is_file(), t.to_path_buf())))
+            .map(|ip| format!("{}\n", upload_path(&ip, true))).collect::<Vec<_>>().join("")
+        )
+      }).collect::<Vec<_>>();
+
+      threads.into_iter().map(|t| t.join().unwrap()).collect::<Vec<_>>().join("")
+    });
+
+    write!(file, "{}", ips.unwrap())?;
   }
 
   init_tray(dir.display().to_string());
