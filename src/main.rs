@@ -76,8 +76,6 @@ fn init_tray(temp_dir: String) {
       }).ok();
 
       app.add_menu_item(&"Quit".to_string(), |_| exit(0)).ok();
-
-      println!("Tray intialized.");
       app.wait_for_message();
     }
   });
