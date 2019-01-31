@@ -158,9 +158,16 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   let mut file = File::create(&dir)?;
 
-  //Write all invalid paths to a temporary file so rclones can ignore those paths during sync.
-  for f in all_paths.iter().filter(|&t| !legal_paths.contains(&(t.is_file(), t.to_path_buf()))) {
-    write!(file, "{}\n", upload_path(&f, true))?;
+  {
+    //Write all invalid paths to a temporary file so rclones can ignore those paths during sync.
+    let invalid_paths = all_paths
+                          .par_iter()
+                          .filter(|&t| !legal_paths.contains(&(t.is_file(), t.to_path_buf())))
+                          .map(|ip| upload_path(&ip, true)).collect::<Vec<_>>();
+
+    for ip in invalid_paths {
+      write!(file, "{}\n", ip)?;
+    }
   }
 
   init_tray(dir.display().to_string());
