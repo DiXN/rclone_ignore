@@ -81,7 +81,74 @@ fn init_tray(temp_dir: String) {
   });
 }
 
+//Get all paths that are not ignored from a .gitignore or .ignore file.
+fn get_included_paths(root: &Path) -> Vec<(bool, PathBuf)> {
+  WalkBuilder::new(root).hidden(false).build().map(|w| {
+    let path = w.unwrap().into_path();
+    let is_file = path.is_file();
+    (is_file, path)
+  }).collect::<Vec<(bool, PathBuf)>>()
+}
+
+//Transform local path to a valid remote path.
+fn upload_path(root: &Path, path: &Path, preserve_file: bool) -> String {
+  let relative = path.strip_prefix(root).unwrap();
+
+  let relative = if !preserve_file {
+    if path.is_file() {
+      relative.parent().unwrap().display().to_string()
+    } else {
+      relative.display().to_string()
+    }
+  } else {
+    if path.is_file() {
+      relative.display().to_string()
+    } else {
+      format!("{}/", relative.display())
+    }
+  };
+
+  if cfg!(target_os = "windows") {
+    str::replace(&relative, "\\", "/")
+  } else {
+    relative
+  }
+}
+
+//Write all invalid paths to a temporary file so rclones can ignore those paths during sync.
+fn update_sync_ignores(root: &Path, dir: &str) -> Result<(), Box<dyn Error>> {
+  let legal_paths = get_included_paths(&root);
+  let mut file = File::create(&dir)?;
+  //Get all paths starting from the specified local root path.
+  let all_paths = WalkDir::new(root).into_iter().map(|p| p.unwrap().into_path()).collect::<Vec<_>>();
+
+  let num_tasks_per_chunk = all_paths.len() / num_cpus::get();
+  let legal_paths_arc = Arc::new(legal_paths);
+
+  let ips = crossbeam::scope(|scope| {
+    let threads = all_paths.chunks(num_tasks_per_chunk).map(|chunk| {
+      let cloned_arr = Arc::clone(&legal_paths_arc);
+      scope.spawn(move |_|
+        chunk.iter()
+          .filter(|&t| !cloned_arr.contains(&(t.is_file(), t.to_path_buf())))
+          .map(|ip| format!("{}\n", upload_path(&root, &ip, true))).collect::<Vec<_>>().join("")
+      )
+    }).collect::<Vec<_>>();
+
+    threads.into_iter().map(|t| t.join().unwrap()).collect::<Vec<_>>().join("")
+  });
+
+  write!(file, "{}", ips.unwrap())?;
+
+  Ok(())
+}
+
 fn sync(remote_root: &str, dir: &str, root: &Path, checkers: usize, tps_limit: f32) -> Result<ExitStatus, std::io::Error> {
+  match update_sync_ignores(&root, &dir) {
+    Ok(_) => (),
+    Err(_) => error!("Could not update sync ignores.")
+  };
+
   let status = Command::new("rclone").arg("sync")
     .args(&[&remote_root, &root.display().to_string().as_ref(),
       "--exclude-from", dir, "--progress", "--checkers",
@@ -115,67 +182,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
   }
 
-  //Get all paths that are not ignored from a .gitignore or .ignore file.
-  let get_included_paths = || WalkBuilder::new(root).hidden(false).build().map(|w| {
-    let path = w.unwrap().into_path();
-    let is_file = path.is_file();
-    (is_file, path)
-  }).collect::<Vec<(bool, PathBuf)>>();
-
-  //Transform local path to a valid remote path.
-  let upload_path = |path: &Path, preserve_file: bool| {
-    let relative = path.strip_prefix(root).unwrap();
-
-    let relative = if !preserve_file {
-      if path.is_file() {
-        relative.parent().unwrap().display().to_string()
-      } else {
-        relative.display().to_string()
-      }
-    } else {
-      if path.is_file() {
-        relative.display().to_string()
-      } else {
-        format!("{}/", relative.display())
-      }
-    };
-
-    if cfg!(target_os = "windows") {
-      str::replace(&relative, "\\", "/")
-    } else {
-      relative
-    }
-  };
-
-  //Get all paths starting from the specified local root path.
-  let all_paths = WalkDir::new(root).into_iter().map(|p| p.unwrap().into_path()).collect::<Vec<_>>();
-  let mut legal_paths = get_included_paths();
-
   let mut dir = env::temp_dir();
   dir.push("rclone_excludes.txt");
 
-  let mut file = File::create(&dir)?;
-
-  {
-    //Write all invalid paths to a temporary file so rclones can ignore those paths during sync.
-    let num_tasks_per_chunk = all_paths.len() / num_cpus::get();
-    let legal_paths_arc = Arc::new(legal_paths.clone());
-
-    let ips = crossbeam::scope(|scope| {
-      let threads = all_paths.chunks(num_tasks_per_chunk).map(|chunk| {
-        let cloned_arr = Arc::clone(&legal_paths_arc);
-        scope.spawn(move |_|
-          chunk.iter()
-            .filter(|&t| !cloned_arr.contains(&(t.is_file(), t.to_path_buf())))
-            .map(|ip| format!("{}\n", upload_path(&ip, true))).collect::<Vec<_>>().join("")
-        )
-      }).collect::<Vec<_>>();
-
-      threads.into_iter().map(|t| t.join().unwrap()).collect::<Vec<_>>().join("")
-    });
-
-    write!(file, "{}", ips.unwrap())?;
-  }
+  let mut legal_paths = get_included_paths(&root);
 
   init_tray(dir.display().to_string());
 
@@ -209,7 +219,7 @@ fn main() -> Result<(), Box<dyn Error>> {
       }
     }
 
-    let legal_paths_updated = get_included_paths();
+    let legal_paths_updated = get_included_paths(&root);
     let mut tasks = Vec::new();
 
     for chunk in paths.chunks(2) {
@@ -219,8 +229,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             legal_paths.iter().filter(|(_, p)| p == &chunk[0].path).next().is_some() &&
               legal_paths_updated.iter().filter(|(_, p)| p == &chunk[1].path).next().is_some() &&
                 ignores.matches(&chunk[0].path).is_empty() && ignores.matches(&chunk[1].path).is_empty() {
-        let from_u_path = upload_path(&chunk[0].path, true);
-        let to_u_path = upload_path(&chunk[1].path, true);
+        let from_u_path = upload_path(&root, &chunk[0].path, true);
+        let to_u_path = upload_path(&root, &chunk[1].path, true);
 
         tasks.push(
           format!("moveto;{};{};{}",
@@ -234,8 +244,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             match &c.op {
               Op::CREATE => {
                 if let Some((is_file, _)) = legal_paths_updated.iter().filter(|(_, p)| p == &c.path).next() {
-                  let u_path = upload_path(&c.path, false);
-                  let print_path = upload_path(&c.path, true);
+                  let u_path = upload_path(&root, &c.path, false);
+                  let print_path = upload_path(&root, &c.path, true);
 
                   if *is_file {
                     tasks.push(
@@ -259,16 +269,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                     tasks.push(
                       format!("copy;{};{};{}",
                       &c.path.display().to_string(),
-                      &format!("{}/{}", remote_root, upload_path(&c.path, false)),
-                      &format!("COPY {}", upload_path(&c.path, true))
+                      &format!("{}/{}", remote_root, upload_path(&root, &c.path, false)),
+                      &format!("COPY {}", upload_path(&root, &c.path, true))
                     ));
                   }
                 }
               },
               Op::RENAME => {
                 if let Some(_) = legal_paths_updated.iter().filter(|(_, p)| p == &c.path).next() {
-                  let from_u_path = upload_path(&c.old_path, true);
-                  let to_u_path = upload_path(&c.path, true);
+                  let from_u_path = upload_path(&root, &c.old_path, true);
+                  let to_u_path = upload_path(&root, &c.path, true);
 
                   tasks.push(
                     format!("moveto;{};{};{}",
@@ -283,7 +293,7 @@ fn main() -> Result<(), Box<dyn Error>> {
               },
               Op::REMOVE => {
                 if let Some((is_file, _)) = legal_paths.iter().filter(|(_, p)| p == &c.path).next() {
-                  let u_path = upload_path(&c.path, false);
+                  let u_path = upload_path(&root, &c.path, false);
 
                   if *is_file {
                     tasks.push(
