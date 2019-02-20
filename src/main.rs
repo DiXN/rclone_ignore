@@ -187,7 +187,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   let mut legal_paths = get_included_paths(&root);
 
-  init_tray(dir.display().to_string());
+  if cfg!(target_os = "windows") {
+    init_tray(dir.display().to_string());
+  }
 
   sync(&remote_root, &dir.display().to_string(), root, checkers, tps_limit)?;
 
