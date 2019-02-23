@@ -122,23 +122,25 @@ fn update_sync_ignores(root: &Path, dir: &str) -> Result<(), Box<dyn Error>> {
   //Get all paths starting from the specified local root path.
   let all_paths = WalkDir::new(root).into_iter().map(|p| p.unwrap().into_path()).collect::<Vec<_>>();
 
-  let num_tasks_per_chunk = all_paths.len() / num_cpus::get();
-  let legal_paths_arc = Arc::new(legal_paths);
+  if !all_paths.is_empty() {
+    let num_tasks_per_chunk = all_paths.len() / num_cpus::get();
+    let legal_paths_arc = Arc::new(legal_paths);
 
-  let ips = crossbeam::scope(|scope| {
-    let threads = all_paths.chunks(num_tasks_per_chunk).map(|chunk| {
-      let cloned_arr = Arc::clone(&legal_paths_arc);
-      scope.spawn(move |_|
-        chunk.iter()
-          .filter(|&t| !cloned_arr.contains(&(t.is_file(), t.to_path_buf())))
-          .map(|ip| format!("{}\n", upload_path(&root, &ip, true))).collect::<Vec<_>>().join("")
-      )
-    }).collect::<Vec<_>>();
+    let ips = crossbeam::scope(|scope| {
+      let threads = all_paths.chunks(num_tasks_per_chunk).map(|chunk| {
+        let cloned_arr = Arc::clone(&legal_paths_arc);
+        scope.spawn(move |_|
+          chunk.iter()
+            .filter(|&t| !cloned_arr.contains(&(t.is_file(), t.to_path_buf())))
+            .map(|ip| format!("{}\n", upload_path(&root, &ip, true))).collect::<Vec<_>>().join("")
+        )
+      }).collect::<Vec<_>>();
 
-    threads.into_iter().map(|t| t.join().unwrap()).collect::<Vec<_>>().join("")
-  });
+      threads.into_iter().map(|t| t.join().unwrap()).collect::<Vec<_>>().join("")
+    });
 
-  write!(file, "{}", ips.unwrap())?;
+    write!(file, "{}", ips.unwrap())?;
+  }
 
   Ok(())
 }
