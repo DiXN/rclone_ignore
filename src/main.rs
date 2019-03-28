@@ -145,16 +145,26 @@ fn update_sync_ignores(root: &Path, dir: &str) -> Result<(), Box<dyn Error>> {
   Ok(())
 }
 
-fn sync(remote_root: &str, dir: &str, root: &Path, checkers: usize, tps_limit: f32) -> Result<ExitStatus, std::io::Error> {
+fn sync(remote_root: &str, dir: &str, root: &Path, checkers: usize, tps_limit: f32, mod_time: bool) -> Result<ExitStatus, std::io::Error> {
   match update_sync_ignores(&root, &dir) {
     Ok(_) => (),
     Err(_) => error!("Could not update sync ignores.")
   };
 
-  let status = Command::new("rclone").arg("sync")
+  let status = if mod_time {
+    Command::new("rclone")
+    .arg("sync")
+    .args(&[&remote_root, &root.display().to_string().as_ref(),
+      "--exclude-from", dir, "--progress", "--no-update-modtime", "--checkers",
+        &format!("{}", checkers), "--tpslimit", &format!("{}", tps_limit), "--retries", "1"]).status()
+
+  } else {
+    Command::new("rclone")
+    .arg("sync")
     .args(&[&remote_root, &root.display().to_string().as_ref(),
       "--exclude-from", dir, "--progress", "--checkers",
-        &format!("{}", checkers), "--tpslimit", &format!("{}", tps_limit), "--retries", "1"]).status();
+        &format!("{}", checkers), "--tpslimit", &format!("{}", tps_limit), "--retries", "1"]).status()
+  };
 
   info!("Synced data with remote.");
 
@@ -167,7 +177,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   Builder::from_env(env).init();
 
-  let (root, remote_root, ignores, checkers, tps_limit) = get_options();
+  let (root, remote_root, ignores, checkers, tps_limit, mod_time) = get_options();
   let root = root.as_path();
 
   if which("rclone").is_err() {
@@ -193,7 +203,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     init_tray(dir.display().to_string());
   }
 
-  sync(&remote_root, &dir.display().to_string(), root, checkers, tps_limit)?;
+  sync(&remote_root, &dir.display().to_string(), root, checkers, tps_limit, mod_time)?;
 
   let (tx, rx) = mpsc::channel();
   let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_millis(200)).expect("Cannot spawn watcher.");

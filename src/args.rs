@@ -77,6 +77,11 @@ pub fn get_matches() -> ArgMatches<'static> {
         .max_values(1)
         .help("Specifies amount of HTTP transactions per second")
     )
+    .arg(
+      Arg::with_name("no-update-modtime")
+        .long("no-update-modtime")
+        .help("Does not update modification time on sync")
+    )
     .get_matches()
 }
 
@@ -185,7 +190,7 @@ fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<ExitStatus, Bo
   Ok(process.wait()?)
 }
 
-pub fn get_options() -> (PathBuf, String, GlobSet, usize, f32) {
+pub fn get_options() -> (PathBuf, String, GlobSet, usize, f32, bool) {
   let matches = get_matches();
 
   let root = if let Ok(lr) = value_t!(matches, "local-root", String) {
@@ -235,5 +240,11 @@ pub fn get_options() -> (PathBuf, String, GlobSet, usize, f32) {
     0.0
   };
 
-  (PathBuf::from(root), remote_root, ignores, checkers, tps_limit)
+  let mod_time = if matches.is_present("no-update-modtime") {
+    true
+  } else {
+    false
+  };
+
+  (PathBuf::from(root), remote_root, ignores, checkers, tps_limit, mod_time)
 }
