@@ -164,25 +164,27 @@ fn update_sync_ignores(root: &Path, dir: &str) -> Result<(), Box<dyn Error>> {
   Ok(())
 }
 
-fn sync(remote_root: &str, dir: &str, root: &Path, checkers: usize, tps_limit: f32, mod_time: bool) -> Result<ExitStatus, std::io::Error> {
+fn sync(remote_root: String, dir: String, root: &Path, sync_args: String) -> Result<ExitStatus, std::io::Error> {
   match update_sync_ignores(&root, &dir) {
     Ok(_) => (),
     Err(_) => error!("Could not update sync ignores.")
   };
 
-  let status = if mod_time {
+  let split = sync_args.split(" ").map(|s| s.to_string()).collect::<Vec<String>>();
+  let args = [remote_root.to_string(), root.display().to_string(), String::from("--exclude-from"), dir.to_string()].to_vec();
+  let concated_args = args.iter().chain(&split).collect::<Vec<_>>();
+
+  let status = if !sync_args.is_empty() {
     Command::new("rclone")
     .arg("sync")
-    .args(&[&remote_root, &root.display().to_string().as_ref(),
-      "--exclude-from", dir, "--progress", "--no-update-modtime", "--checkers",
-        &format!("{}", checkers), "--tpslimit", &format!("{}", tps_limit), "--retries", "1"]).status()
+    .args(&concated_args)
+    .status()
 
   } else {
     Command::new("rclone")
     .arg("sync")
-    .args(&[&remote_root, &root.display().to_string().as_ref(),
-      "--exclude-from", dir, "--progress", "--checkers",
-        &format!("{}", checkers), "--tpslimit", &format!("{}", tps_limit), "--retries", "1"]).status()
+    .args(&[remote_root, root.display().to_string(), String::from("--exclude-from"), dir])
+    .status()
   };
 
   info!("Synced data with remote.");
@@ -196,7 +198,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   Builder::from_env(env).init();
 
-  let (root, remote_root, ignores, checkers, tps_limit, mod_time) = get_options();
+  let (root, remote_root, ignores, sync_args) = get_options();
   let root = root.as_path();
 
   if which("rclone").is_err() {
@@ -222,7 +224,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     init_tray();
   }
 
-  sync(&remote_root, &dir.display().to_string(), root, checkers, tps_limit, mod_time)?;
+  sync(remote_root.to_owned(), dir.display().to_string(), root, sync_args)?;
 
   let (tx, rx) = mpsc::channel();
   let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_millis(200)).expect("Cannot spawn watcher.");

@@ -1,4 +1,4 @@
-use clap::{Arg, App, ArgMatches};
+use clap::{Arg, App, ArgMatches, AppSettings};
 use globset::{Glob, GlobSet, GlobSetBuilder, Error as Glob_Error};
 
 use std::{
@@ -21,6 +21,7 @@ macro_rules! exit {
 pub fn get_matches() -> ArgMatches<'static> {
   App::new("rclone_ignore")
     .about("Ignores glob patterns specified in a `.gitignore` or `.ignore` file for usage with rclone")
+    .setting(AppSettings::TrailingVarArg)
     .arg(
       Arg::with_name("local-root")
         .short("l")
@@ -63,24 +64,9 @@ pub fn get_matches() -> ArgMatches<'static> {
         .help("Runs rclone_ignore on system startup")
     )
     .arg(
-      Arg::with_name("checkers")
-        .short("c")
-        .long("checkers")
-        .takes_value(true)
-        .max_values(1)
-        .help("Specifies amount of checkers used for sync")
-    )
-    .arg(
-      Arg::with_name("tps-limit")
-        .long("tps-limit")
-        .takes_value(true)
-        .max_values(1)
-        .help("Specifies amount of HTTP transactions per second")
-    )
-    .arg(
-      Arg::with_name("no-update-modtime")
-        .long("no-update-modtime")
-        .help("Does not update modification time on sync")
+      Arg::with_name("sync-args")
+        .multiple(true)
+        .help("Specifies arguments for sync")
     )
     .get_matches()
 }
@@ -168,16 +154,17 @@ fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<ExitStatus, Bo
           arguments_str.push_str(&format!("--checkers {} ", c));
         }
 
-        if let Ok(t) = value_t!(matches, "tps-limit", f32) {
-          arguments_str.push_str(&format!("--tpslimit {} ", t));
-        }
-
         if let Ok(ignores) = values_t!(matches, "ignores", String) {
           arguments_str.push_str("--ignores ");
 
           for ignore in ignores {
             arguments_str.push_str(&format!("{} ", ignore));
           }
+        }
+
+        if let Ok(sa) = value_t!(matches, "sync-args", String) {
+          arguments_str.push_str(" -- ");
+          arguments_str.push_str(&sa);
         }
 
         writer.write_all(format!("$Shortcut.Arguments = \"{}\";", arguments_str).as_bytes())?;
@@ -190,7 +177,7 @@ fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<ExitStatus, Bo
   Ok(process.wait()?)
 }
 
-pub fn get_options() -> (PathBuf, String, GlobSet, usize, f32, bool) {
+pub fn get_options() -> (PathBuf, String, GlobSet, String) {
   let matches = get_matches();
 
   let root = if let Ok(lr) = value_t!(matches, "local-root", String) {
@@ -228,23 +215,11 @@ pub fn get_options() -> (PathBuf, String, GlobSet, usize, f32, bool) {
     }
   }
 
-  let checkers = if let Ok(c) = value_t!(matches, "checkers", usize) {
-    c
+  let sync_args = if let Ok(sa) = value_t!(matches, "sync-args", String) {
+    sa
   } else {
-    8
+    String::from("")
   };
 
-  let tps_limit = if let Ok(t) = value_t!(matches, "tps-limit", f32) {
-    t
-  } else {
-    0.0
-  };
-
-  let mod_time = if matches.is_present("no-update-modtime") {
-    true
-  } else {
-    false
-  };
-
-  (PathBuf::from(root), remote_root, ignores, checkers, tps_limit, mod_time)
+  (PathBuf::from(root), remote_root, ignores, sync_args)
 }
