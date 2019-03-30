@@ -10,14 +10,13 @@ use walkdir::WalkDir;
 
 use std::{
   env,
-  ptr,
   thread,
   error::Error,
   time::Duration,
   sync::{mpsc, Arc},
   fs::File,
-  io::{BufWriter, Write},
-  process::{exit, Command, Stdio, ExitStatus},
+  io::Write,
+  process::{exit, Command, ExitStatus},
   path::{PathBuf, Path}
 };
 
@@ -28,77 +27,8 @@ use crate::pathop::{Op, PathOp};
 mod args;
 use crate::args::{get_options, get_matches};
 
-#[cfg(not(target_os = "windows"))]
-fn init_tray() {
-  info!("\"tray\" is currently not supported on your system.");
-}
-
-#[cfg(target_os = "windows")]
-fn init_tray() {
-  thread::spawn(move || {
-    if let Ok(mut app) = systray::Application::new() {
-      let window = unsafe { kernel32::GetConsoleWindow() };
-
-      if window != ptr::null_mut() {
-        unsafe {
-          user32::ShowWindow(window, 0);
-        }
-      }
-
-      match app.set_icon_from_resource(&"tray_icon".to_string()) {
-        Ok(_) => (),
-        Err(e) => println!("{}", e)
-      };
-
-      //Restart the whole process on sync call for now.
-      app.add_menu_item(&"Sync".to_string(), move |_| {
-        let mut process = Command::new("powershell")
-          .args(&["-Command", "-"])
-          .stdin(Stdio::piped())
-          .spawn().expect("Could not start powershell.");
-
-        {
-          let mut out_stdin = process.stdin.as_mut().expect("Could not collect stdin.");
-          let mut writer = BufWriter::new(&mut out_stdin);
-
-          let current_path = env::current_exe().expect("Could not get startup path of executable.");
-
-          //Stop current instance of rclone_ignore.
-          writer.write_all("Stop-Process -processname rclone_ignore;".as_bytes())
-            .expect("Could not write to powershell process.");
-
-          //Start new instance of rclone_ignore.
-          writer.write_all(
-            format!("Start-Process -FilePath \"{}\" -ArgumentList \"{}\";",
-            current_path.display(), env::args().skip(1).collect::<Vec<_>>().join(" ")).as_bytes()
-          )
-            .expect("Could not write to powershell process.");
-        }
-
-        process.wait().expect("Could not start powershell process.");
-      }).ok();
-
-      app.add_menu_item(&"Show".to_string(), move |_| {
-        if window != ptr::null_mut() {
-          unsafe {
-            user32::ShowWindow(window, 5);
-          }
-        }
-      }).ok();
-
-      app.add_menu_item(&"Hide".to_string(), move |_| {
-        if window != ptr::null_mut() {
-          unsafe {
-            user32::ShowWindow(window, 0);
-          }
-        }
-      }).ok();
-
-      app.add_menu_item(&"Quit".to_string(), |_| exit(0)).ok();
-      app.wait_for_message();
-    }
-  });
-}
+mod tray;
+use crate::tray::init_tray;
 
 //Get all paths that are not ignored from a .gitignore or .ignore file.
 fn get_included_paths(root: &Path) -> Vec<(bool, PathBuf)> {
@@ -192,6 +122,7 @@ fn sync(remote_root: String, dir: String, root: &Path, sync_args: String) -> Res
   status
 }
 
+#[allow(unreachable_code)]
 fn main() -> Result<(), Box<dyn Error>> {
   let env = Env::default()
     .filter_or(env_logger::DEFAULT_FILTER_ENV, "info");
@@ -218,6 +149,7 @@ fn main() -> Result<(), Box<dyn Error>> {
   let mut dir = env::temp_dir();
   dir.push("rclone_excludes.txt");
 
+  //Use this reference to trace file / folder moves.
   let mut legal_paths = get_included_paths(&root);
 
   if cfg!(target_os = "windows") {
@@ -337,6 +269,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                       &format!("DELETE {}", u_path),
                     ));
                   } else {
+                    //Delete folder and all of its content.
                     tasks.push(
                       format!("purge;{};{}",
                       &format!("{}/{}", remote_root, u_path),

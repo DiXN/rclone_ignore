@@ -71,9 +71,11 @@ pub fn get_matches() -> ArgMatches<'static> {
     .get_matches()
 }
 
+
 fn get_ignores() -> Result<GlobSet, Glob_Error> {
   let mut builder = GlobSetBuilder::new();
 
+  //Pre defined ignores.
   builder.add(Glob::new("*desktop.ini")?);
   builder.add(Glob::new("*Thumbs.db")?);
   builder.add(Glob::new("*.DS_Store")?);
@@ -94,6 +96,7 @@ fn get_ignores() -> Result<GlobSet, Glob_Error> {
 }
 
 #[cfg(not(target_os = "windows"))]
+#[warn(unused_variables)]
 fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<ExitStatus, Box<Std_Error>> {
   info!("\"autostart\" is currently not supported on your system.");
 
@@ -124,6 +127,7 @@ fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<ExitStatus, Bo
 
     match env::current_exe() {
       Ok(exe_path) => {
+        //reference: https://stackoverflow.com/a/47340271
         writer.write_all("$WshShell = New-Object -comObject WScript.Shell;".as_bytes())?;
         writer.write_all(format!("$Shortcut = $WshShell.CreateShortcut(\"{}\\rclone_ignore.lnk\");", auto_path).as_bytes())?;
         writer.write_all(format!("$Shortcut.TargetPath = \"{}\";", exe_path.display()).as_bytes())?;
