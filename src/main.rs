@@ -28,6 +28,7 @@ mod args;
 use crate::args::{get_options, get_matches};
 
 mod tray;
+#[cfg(feature = "tray")]
 use crate::tray::init_tray;
 
 //Get all paths that are not ignored from a .gitignore or .ignore file.
@@ -152,9 +153,8 @@ fn main() -> Result<(), Box<dyn Error>> {
   //Use this reference to trace file / folder moves.
   let mut legal_paths = get_included_paths(&root);
 
-  if cfg!(target_os = "windows") {
-    init_tray();
-  }
+  #[cfg(feature = "tray")]
+  init_tray();
 
   sync(remote_root.to_owned(), dir.display().to_string(), root, sync_args)?;
 

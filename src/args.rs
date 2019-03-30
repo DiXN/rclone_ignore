@@ -96,7 +96,7 @@ fn get_ignores() -> Result<GlobSet, Glob_Error> {
 }
 
 #[cfg(not(target_os = "windows"))]
-#[warn(unused_variables)]
+#[allow(unused_variables)]
 fn autostart(lr: &Path, rr: &str, matches: &ArgMatches) -> Result<ExitStatus, Box<Std_Error>> {
   info!("\"autostart\" is currently not supported on your system.");
 
