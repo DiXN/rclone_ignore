@@ -18,10 +18,10 @@ num_cpus = "1.9.0"
 crossbeam = "0.7.1"
 
 [target.'cfg(windows)'.dependencies]
-winapi = "*"
+winapi = "0.3.8"
 user32-sys = "*"
 kernel32-sys = "*"
-systray = "0.3.0"
+systray = "0.4.0"
 
 [target.'cfg(windows)'.build-dependencies]
 windres = "0.2"
