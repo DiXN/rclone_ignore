@@ -1,0 +1,17 @@
+jobs:
+  - job: build
+    displayName: rclone_ignore
+    variables:
+      TOOLCHAIN: stable
+    pool:
+      vmImage: windows-latest
+    steps:
+      - template: ci/azure-install-rust.yml
+      - powershell: cargo build --release --verbose
+        displayName: build rclone_ignore
+      - task: PublishBuildArtifacts@1
+        inputs:
+          PathtoPublish: 'target\release\rclone_ignore.exe'
+          ArtifactName: 'rclone_ignore'
+          publishLocation: 'container'
+        displayName: Publish rclone_ignore
