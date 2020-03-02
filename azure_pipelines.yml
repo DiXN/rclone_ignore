@@ -7,7 +7,7 @@ jobs:
       vmImage: windows-latest
     steps:
       - template: ci/azure-install-rust.yml
-      - powershell: cargo build --release --verbose
+      - powershell: cargo build --features tray --release --verbose
         displayName: build rclone_ignore
       - task: PublishBuildArtifacts@1
         inputs:
