@@ -13,13 +13,15 @@ pub fn init_tray() {
     process::{exit, Command, Stdio}
   };
 
+  use winapi::um::wincon::GetConsoleWindow;
+  use winapi::um::winuser::ShowWindow;
+
   thread::spawn(move || {
     if let Ok(mut app) = systray::Application::new() {
-      let window = unsafe { kernel32::GetConsoleWindow() };
-
-      if window != ptr::null_mut() {
+      let win = unsafe { GetConsoleWindow() };
+      if win != ptr::null_mut() {
         unsafe {
-          user32::ShowWindow(window, 0);
+          ShowWindow(win, 0);
         }
       }
 
@@ -54,25 +56,37 @@ pub fn init_tray() {
         }
 
         process.wait().expect("Could not start powershell process.");
+
+        Ok::<_, systray::Error>(())
       }).ok();
 
-      app.add_menu_item(&"Show".to_string(), move |_| {
+      app.add_menu_item(&"Show".to_string(), |_| {
+        let window = unsafe { GetConsoleWindow() };
         if window != ptr::null_mut() {
           unsafe {
-            user32::ShowWindow(window, 5);
+            ShowWindow(window, 5);
           }
         }
+
+        Ok::<_, systray::Error>(())
       }).ok();
 
-      app.add_menu_item(&"Hide".to_string(), move |_| {
+      app.add_menu_item(&"Hide".to_string(), |_| {
+        let window = unsafe { GetConsoleWindow() };
         if window != ptr::null_mut() {
           unsafe {
-            user32::ShowWindow(window, 0);
+            ShowWindow(window, 0);
           }
         }
+
+        Ok::<_, systray::Error>(())
       }).ok();
 
-      app.add_menu_item(&"Quit".to_string(), |_| exit(0)).ok();
+      app.add_menu_item(&"Quit".to_string(), |win| {
+        win.quit();
+        Ok::<_, systray::Error>(())
+      }).ok();
+
       app.wait_for_message();
     }
   });
