@@ -1,6 +1,6 @@
 [package]
 name = "rclone_ignore"
-version = "0.1.0"
+version = "0.7.0"
 authors = ["Michael Kaltschmid <kaltschmidmichael@gmail.com>"]
 edition = "2018"
 
