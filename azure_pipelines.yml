@@ -1,3 +1,11 @@
+trigger:
+  branches:
+    include:
+    - '*'
+  tags:
+    include:
+    - '*'
+
 jobs:
   - job: build
     displayName: rclone_ignore
@@ -6,19 +14,29 @@ jobs:
     pool:
       vmImage: windows-latest
     steps:
-      - template: ci/azure-install-rust.yml
-      - powershell: cargo build --features tray --release --verbose
-        displayName: build rclone_ignore
+      - powershell: cargo build --release --features tray --verbose
+        displayName: Build rclone_ignore
       - task: PublishBuildArtifacts@1
         inputs:
           PathtoPublish: 'target\release\rclone_ignore.exe'
           ArtifactName: 'rclone_ignore'
           publishLocation: 'container'
         displayName: Publish rclone_ignore
+      - task: CopyFiles@2
+        displayName: Copy files
+        inputs:
+          sourceFolder: 'target\release'
+          targetFolder: $(Build.ArtifactStagingDirectory)
+      - bash: echo "##vso[task.setvariable variable=TAG]${BUILD_SOURCEBRANCH##refs/tags/}"
+        displayName: Set TAG Variable
+        condition: startsWith(variables['Build.SourceBranch'], 'refs/tags/')
       - task: GithubRelease@0
-        displayName: 'Create GitHub Release'
-        condition: startsWith(variables['Build.SourceBranch'], 'refs/tags/v')
+        displayName: Create GitHub Release
+        condition: startsWith(variables['Build.SourceBranch'], 'refs/tags/')
         inputs:
           gitHubConnection: github
           repositoryName: dixn/rclone_ignore
+          assetUploadMode: replace
+          action: edit
+          tag: $(TAG)
           assets: $(Build.ArtifactStagingDirectory)/*.exe
