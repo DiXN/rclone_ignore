@@ -15,3 +15,10 @@ jobs:
           ArtifactName: 'rclone_ignore'
           publishLocation: 'container'
         displayName: Publish rclone_ignore
+      - task: GithubRelease@0
+        displayName: 'Create GitHub Release'
+        condition: startsWith(variables['Build.SourceBranch'], 'refs/tags/v')
+        inputs:
+          gitHubConnection: github
+          repositoryName: dixn/rclone_ignore
+          assets: $(Build.ArtifactStagingDirectory)/*.exe
